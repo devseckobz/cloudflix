@@ -28,3 +28,15 @@ test('URLs encode hash and untrusted file names as query data',()=>{
  assert.ok(url.startsWith('/api/media/'+ 'a'.repeat(40)+'?path='))
  assert.equal(new URL(url,'http://localhost').searchParams.get('path'),'Film (2026)/Film & Escape.mp4')
 })
+
+test('language shortcuts recognize nested subtitle names and ISO-639 aliases',()=>{
+ const filenames=['Movie.mp4','Movie.srt','Subs/English.srt','Subs/dan.srt','Subs/fin.srt','Subs/nor.srt','Subs/swe.srt']
+ const playback=findPlayback(filenames.map((path,i)=>({path,size:i===0?1000000:100})))
+ const labels=new Map(playback.subtitles.map(sub=>[sub.path,[sub.language,sub.label]]))
+ assert.deepEqual(labels.get('Subs/English.srt'),['en','English'])
+ assert.deepEqual(labels.get('Subs/dan.srt'),['da','Danish'])
+ assert.deepEqual(labels.get('Subs/fin.srt'),['fi','Finnish'])
+ assert.deepEqual(labels.get('Subs/nor.srt'),['no','Norwegian'])
+ assert.deepEqual(labels.get('Subs/swe.srt'),['sv','Swedish'])
+ assert.deepEqual(labels.get('Movie.srt'),['en','Default'])
+})

@@ -18,7 +18,10 @@ test('Home shows only completed movie cards with TMDB ratings, year and search',
  assert.match(home,/Search downloaded movies/)
  assert.doesNotMatch(home,/class="stat-grid"/)
  assert.doesNotMatch(home,/class="hero"/)
- assert.doesNotMatch(home,/YOUR PERSONAL MOVIE HUB/)\n assert.match(home,/class=\"cinema-wall\"/)\n assert.match(home,/class=\"film-play-ring\"/)\n assert.match(home,/openMovie\(movie\)/)
+ assert.doesNotMatch(home,/YOUR PERSONAL MOVIE HUB/)
+ assert.match(home,/class="cinema-wall"/)
+ assert.match(home,/class="film-play-ring"/)
+ assert.match(home,/openMovie\(movie\)/)
 })
 
 test('Home has real next, previous, and numbered pages',()=>{

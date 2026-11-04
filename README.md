@@ -101,7 +101,7 @@ CGO_ENABLED=0 go build -trimpath -o cloudflix ./cmd/cloudflix
 
 ## Releasing
 
-CI runs on each push and pull request. The release workflow builds Linux **amd64** and **arm64** binaries and publishes versioned, SHA-256-checksummed `.tar.gz` artifacts to GitHub Releases. The first successful push publishes **v0.1.0** if it does not already exist. For later releases, open **Actions → Build and Publish Release → Run workflow**, provide a new semver tag such as `v0.1.1`, and run it on `main`. A workflow run will build and upload the new version.
+CI runs on each push and pull request. The release workflow builds Linux **amd64** and **arm64** binaries and publishes versioned, SHA-256-checksummed `.tar.gz` artifacts to GitHub Releases. A successful release workflow on the main branch publishes the current initial stable version if it does not already exist. For later releases, open **Actions → Build and Publish Release → Run workflow**, provide a new semver tag such as `v0.1.2`, and run it on `main`. A workflow run will build and upload the new version.
 
 ## Security notes
 

@@ -260,12 +260,14 @@ func (e *engine) startWhenReady(item *entry){
   defer e.mu.Unlock()
   if e.entries[item.hash]!=item || item.torrent!=tt{return}
   torrentFiles:=tt.Files()
-  rawFiles:=make([]manifestFile,0,len(torrentFiles))
+  rawFiles:=make([]manifestFile,0,min(len(torrentFiles),maxManifestFiles))
   hasVideo:=false
   for _,file:=range torrentFiles{
    path:=filepath.ToSlash(file.Path())
    size:=file.Length()
-   rawFiles=append(rawFiles,manifestFile{Path:path,Size:size})
+   if len(rawFiles)<maxManifestFiles{
+    rawFiles=append(rawFiles,manifestFile{Path:path,Size:size})
+   }
    if allowedMediaPath(path) && size>0 && strings.EqualFold(filepath.Ext(path),".mp4"){hasVideo=true}
   }
   // Preserve the actual torrent filename even if the magnet is rejected.
@@ -277,6 +279,7 @@ func (e *engine) startWhenReady(item *entry){
    _,_=e.db.Exec("UPDATE torrents SET title=?,year=? WHERE hash=?",title,year,item.hash)
   }
   manifest:=buildFileManifest(rawFiles,hasVideo)
+  manifest.Total=len(torrentFiles)
   if err:=e.saveFileManifestLocked(item,manifest);err!=nil{
    e.rejectTorrentLocked(item,"Unable to save torrent file list. No files were downloaded.")
    return

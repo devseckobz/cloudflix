@@ -102,12 +102,26 @@ func securityHeaders(next http.Handler)http.Handler{
   if r.Method=="POST" || r.Method=="PUT" || r.Method=="PATCH" || r.Method=="DELETE" {
    if !strings.HasPrefix(r.Header.Get("Content-Type"),"application/json"){http.Error(w,"expected application/json",415);return}
    if origin:=r.Header.Get("Origin");origin!=""{
-    parsed,err:=url.Parse(origin)
-    if err!=nil || parsed.Host!=r.Host || (parsed.Scheme!="https" && parsed.Scheme!="http"){http.Error(w,"forbidden origin",403);return}
+    if !sameOriginHost(origin,r.Host){http.Error(w,"forbidden origin",403);return}
    }
   }
   next.ServeHTTP(w,r)
  })
+}
+// Compare hostnames case-insensitively and normalize HTTP's default port.
+// Browsers omit :80 from Origin even when a proxy preserves :80 in Host.
+func sameOriginHost(origin,host string)bool{
+ source,err:=url.Parse(origin)
+ if err!=nil || (source.Scheme!="http" && source.Scheme!="https") || source.Hostname()=="" || source.User!=nil || source.Path!="" || source.RawQuery!="" || source.Fragment!=""{return false}
+ target,err:=url.Parse("//"+host)
+ if err!=nil || target.Hostname()=="" || target.User!=nil || target.Path!=""{return false}
+ expectedPort:="80"
+ if source.Scheme=="https"{expectedPort="443"}
+ originPort:=source.Port()
+ if originPort==""{originPort=expectedPort}
+ targetPort:=target.Port()
+ if targetPort==""{targetPort=expectedPort}
+ return strings.EqualFold(source.Hostname(),target.Hostname()) && originPort==targetPort
 }
 func respond(w http.ResponseWriter,status int,value any){
  w.Header().Set("Content-Type","application/json; charset=utf-8")

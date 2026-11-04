@@ -66,10 +66,13 @@ case "$(uname -m)" in
  *) die "Unsupported architecture. Only linux/amd64 and linux/arm64 are available.";;
 esac
 [[ "$VERSION" == "latest" || "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][a-zA-Z0-9.]+)?$ ]] || die "Invalid version."
-for command_name in ss sha256sum tar systemctl runuser;do
+for command_name in ss sha256sum tar systemctl runuser flock;do
  command -v "$command_name" >/dev/null || die "Required command not found: $command_name"
 done
 command -v curl >/dev/null || command -v wget >/dev/null || die "curl or wget is required."
+# Root-owned lock path prevents overlapping shell and Settings updates.
+exec 9>/run/cloudflix-update.lock
+flock -n 9 || die "Another Cloudflix update is already running."
 
 # Port 80 must not be owned by unrelated software. During an update, the
 # existing Cloudflix service itself is allowed to occupy this port.
@@ -129,6 +132,9 @@ install -m 0755 "$work/cloudflix" "$BIN.new"
 pin_status=0
 runuser -u cloudflix -- env CLOUDFLIX_DATA_DIR=/var/lib/cloudflix "$BIN.new" pin status >/dev/null 2>&1 || pin_status=$?
 if [[ "$pin_status" == 3 ]];then
+  if [[ "${CLOUDFLIX_NONINTERACTIVE:-0}" == 1 ]];then
+    die "The existing installation needs a 6-digit PIN. Run update.sh from the VPS terminal first."
+  fi
   [[ -r /dev/tty && -w /dev/tty ]] || die "An interactive terminal is required for the six-digit PIN migration."
   info "Your old login must be replaced with a six-digit PIN."
   while true;do
@@ -208,6 +214,15 @@ if [[ "$healthy" != 1 ]];then
  die "The health check failed; restored the previous version."
 fi
 info "Update completed. Movies, PIN and TMDB settings preserved."
+# Use only root-owned helper scripts for browser-triggered updates.
+# A setup failure must not roll back an otherwise healthy application.
+if fetch "https://raw.githubusercontent.com/$REPO/main/installer/setup-web-updater.sh" "$work/setup-web-updater.sh";then
+ if ! /bin/bash "$work/setup-web-updater.sh";then
+  info "WARNING: Could not enable the Settings updater. The one-line updater still works."
+ fi
+else
+ info "WARNING: Could not fetch the Settings updater service. Retry the one-line updater later."
+fi
 print_access_url
 info "Allow inbound TCP 80 only from trusted IP addresses where possible."
 info "WARNING: HTTP does not encrypt PINs, session cookies or API tokens."

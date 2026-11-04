@@ -409,7 +409,7 @@
  </div>
  {#if selected}
   <div class="modal-backdrop cinema-player-backdrop" role="presentation" onclick={(event)=>{if(event.target===event.currentTarget)closeMovie()}}>
-   <section class="cinema-player-modal" role="dialog" aria-modal="true" aria-label={'Watch '+selected.title}>
+   <div class="cinema-player-modal" role="dialog" aria-modal="true" aria-label={'Watch '+selected.title}>
     <div class="cinema-player-heading">
      <div class="player-title-group">
       <span class="library-kicker"><span class="kicker-mark"></span> NOW SHOWING</span>
@@ -472,7 +472,7 @@
       {/each}
      </div>
     {/if}
-   </section>
+   </div>
   </div>
  {/if}
 {/if}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Uninstall Cloudflix from its standard VPS locations.
-# Destructive operation: requires an explicit confirmation from /dev/tty.
+# Destructive: full removal by default, including movies and database.
 set -Eeuo pipefail
 umask 077
 
@@ -18,7 +18,6 @@ die(){ printf '[cloudflix] ERROR: %s\n' "$*" >&2; exit 1; }
 [[ "$(uname -s)" == "Linux" ]] || die "This uninstaller supports Linux only."
 command -v systemctl >/dev/null 2>&1 || die "systemd is required."
 [[ "$KEEP_DATA" == "0" || "$KEEP_DATA" == "1" ]] || die "CLOUDFLIX_KEEP_DATA must be 0 or 1."
-[[ -r /dev/tty && -w /dev/tty ]] || die "An interactive terminal is required; nothing has been deleted."
 
 # Never follow an unexpected symlink or traverse into other filesystems when
 # removing persistent data. User-selected download locations are not touched.
@@ -43,22 +42,12 @@ guard_directory "$CONFIG_DIR"
 if [[ "$KEEP_DATA" == "0" ]];then guard_directory "$DATA_DIR";fi
 [[ ! -L "$UNIT" && ! -L "$BIN" ]] || die "Unexpected symlink at the service or binary path. Review manually."
 
-printf '\n' > /dev/tty
-log "Cloudflix removal plan:"
-printf '  Stop/disable cloudflix.service\n  Delete %s\n  Delete %s\n  Delete %s\n' "$UNIT" "$BIN" "$CONFIG_DIR" > /dev/tty
-if [[ "$KEEP_DATA" == "0" ]];then
-  printf '  PERMANENTLY DELETE %s (ALL movies, downloads, PIN, sessions and database)\n' "$DATA_DIR" > /dev/tty
-  printf '  Remove the dedicated cloudflix system user, if safe\n' > /dev/tty
+log "Uninstalling Cloudflix and stopping its service..."
+if [[ "$KEEP_DATA" == 0 ]];then
+  log "WARNING: Permanently deleting $DATA_DIR, including downloaded movies, database and PIN."
 else
-  printf '  KEEP %s (movies, PIN and database)\n' "$DATA_DIR" > /dev/tty
-  printf '  KEEP the cloudflix system user to preserve ownership\n' > /dev/tty
+  log "Keeping $DATA_DIR and the service account."
 fi
-printf '  Remove the Cloudflix-specific Caddy site, if present\n' > /dev/tty
-printf '\nThis does not uninstall Caddy or modify unrelated websites.\n' > /dev/tty
-IFS= read -r -p 'Type DELETE CLOUDFLIX to confirm: ' confirmation < /dev/tty || die "No confirmation received. No changes made."
-[[ "$confirmation" == "DELETE CLOUDFLIX" ]] || die "Confirmation mismatch. No changes made."
-unset confirmation
-
 if [[ -f "$UNIT" ]] || systemctl is-active --quiet cloudflix.service;then
   log "Stopping Cloudflix..."
   systemctl stop cloudflix.service || die "Unable to stop Cloudflix. No files removed."

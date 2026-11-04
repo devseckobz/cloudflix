@@ -32,7 +32,7 @@ func TestClearTMDBSettings(t *testing.T) {
 }
 func TestTMDBTokenValidationPattern(t *testing.T) {
  for _,bad:=range []string{"","short","example token with spaces","../naughty","\ninvalid"} {
-  if tmdbBearerPattern.MatchString(bad){t.Errorf("accepted invalid bearer token %q",bad)}
+  if validTMDBToken(bad){t.Errorf("accepted invalid bearer token %q",bad)}
  }
- if !tmdbBearerPattern.MatchString(strings.Repeat("A",80)){t.Fatal("rejected standard token character set")}
+ if !validTMDBToken(strings.Repeat("A",80)){t.Fatal("rejected standard token character set")}
 }

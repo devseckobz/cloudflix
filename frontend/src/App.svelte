@@ -41,9 +41,19 @@
  const filtered = $derived(movies.filter(m => (filter==='all'||(filter==='active'&&m.status!=='completed'&&m.status!=='paused')||(filter==='complete'&&m.status==='completed')) && (m.title.toLowerCase().includes(search.toLowerCase())||m.year.includes(search))))
  const featured = $derived(movies.find(m=>m.backdrop)||movies[0])
  const call = async (path:string,method='GET',data?:object)=>{
-   const response=await fetch('/api/'+path,{method,credentials:'same-origin',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined})
-   const result=await response.json()
-   if(!response.ok) throw new Error(result.error||'Request failed')
+   let response:Response
+   try{
+     response=await fetch('/api/'+path,{method,credentials:'same-origin',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined})
+   }catch{
+     throw new Error('Cloudflix is unreachable. Check that the server is running and reload.')
+   }
+   const result=await response.json().catch(()=>({error:''}))
+   if(!response.ok){
+     if(response.status===429)throw new Error(result.error||'Too many attempts. Try again in 15 minutes.')
+     if(response.status===403)throw new Error('Login request was rejected by the server. Reload this page and try again.')
+     if(response.status===401 && path==='auth/login')throw new Error('Incorrect PIN. Check the six digits and try again.')
+     throw new Error(result.error||'Server error (HTTP '+response.status+').')
+   }
    return result
  }
  const loadSettings=async()=>{
@@ -100,13 +110,20 @@
  })
  const authenticate=async()=>{
    error=''
-   if(!/^[0-9]{6}$/.test(pin)){error='Enter your six-digit access PIN';return}
+   if(!/^[0-9]{6}$/.test(pin)){error='Enter your 6-digit PIN';return}
    submitting=true
    try{
      await call('auth/login','POST',{pin})
-     pin='';auth='ready';await refresh();connect()
-   }catch(e){error=(e as Error).message}
-   finally{submitting=false}
+     const status=await call('auth/status')
+     if(!status.authenticated)throw new Error('Session cookie was not saved. Check your browser cookie settings.')
+     pin=''
+     auth='ready'
+     await refresh()
+     connect()
+   }catch(e){
+     error=(e as Error).message
+     pin=''
+   }finally{submitting=false}
  }
  const signOut=async()=>{try{await call('auth/logout','POST',{})}catch{}live?.close();connected=false;auth='login';movies=[]}
  const add=async()=>{
@@ -143,18 +160,16 @@
   </div>
  </div>
 {:else if auth==='login'}
- <div class="auth-screen">
-  <div class="auth-glow"></div>
-  <form class="auth-card" onsubmit={(e)=>{e.preventDefault();authenticate()}}>
-   <div class="brand"><span class="brand-icon"><Film size={28}/></span><strong>cloud<span>flix</span></strong></div>
-   <div class="auth-shield"><Shield size={28}/></div>
-   <h1>Welcome back</h1>
-   <p>Enter the six-digit access PIN configured on your VPS.</p>
-   <label for="pin">Access PIN</label>
-   <input id="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required autocomplete="off" bind:value={pin} placeholder="••••••" class="pin-field"/>
-   {#if error}<div class="alert"><AlertCircle size={16}/>{error}</div>{/if}
-   <button class="primary wide" disabled={submitting||pin.length!==6} type="submit">Unlock Cloudflix <span>→</span></button>
-   <small>Five incorrect attempts lock PIN login for 15 minutes.</small>
+ <div class="auth-screen auth-minimal">
+  <form class="auth-card auth-compact" onsubmit={(e)=>{e.preventDefault();void authenticate()}}>
+   <div class="auth-wordmark"><span class="auth-logo"><Film size={23} strokeWidth={2.2}/></span><span>cloud<strong>flix</strong></span></div>
+   <h1>Enter your PIN</h1>
+   <p>Unlock your movie library.</p>
+   <label for="pin">6-digit access PIN</label>
+   <input id="pin" class="pin-field" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required autocomplete="off" bind:value={pin} oninput={(event)=>{pin=event.currentTarget.value.replace(/[^0-9]/g,'').slice(0,6);error=''}} placeholder="••••••" aria-invalid={Boolean(error)} />
+   {#if error}<div class="auth-error" role="alert"><AlertCircle size={16}/><span>{error}</span></div>{/if}
+   <button class="primary auth-submit" disabled={submitting||pin.length!==6} type="submit">{#if submitting}<LoaderCircle size={17} class="spin"/>{:else}Continue <span aria-hidden="true">→</span>{/if}</button>
+   <span class="auth-footer">Your personal movie space</span>
   </form>
  </div>
 {:else}

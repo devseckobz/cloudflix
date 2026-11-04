@@ -30,6 +30,6 @@ jobs:
       - name: Vet backend
         run: go vet ./...
       - name: Validate deployment shell scripts
-        run: bash -n installer/install.sh installer/update.sh installer/pin.sh
+        run: bash -n installer/install.sh installer/update.sh installer/pin.sh installer/uninstall.sh
       - name: Compile Linux binary
         run: CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=dev" -o /tmp/cloudflix ./cmd/cloudflix

@@ -3,6 +3,7 @@
  import { selectLibraryPage, countDownloading } from './lib/library.js'
  import {findPlayback,mediaURL} from './lib/media.js'
  import {createVersionReloadMonitor} from './lib/version-reload.js'
+ import {applySubtitleSelection} from './lib/subtitles.js'
  import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight, Maximize2, Clapperboard as FilmClap, MonitorPlay, RefreshCw, ArrowUpCircle } from '@lucide/svelte'
 
  type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
@@ -19,6 +20,8 @@
  let selected = $state<Movie|null>(null)
  let playerVideo = $state<HTMLVideoElement|null>(null)
  let playbackError = $state('')
+ let ccEnabled = $state(false)
+ let selectedSubtitle = $state(0)
  let noticeTimer:ReturnType<typeof setTimeout>|undefined
  let connected = $state(false)
  let version = $state('v0.1.0-alpha')
@@ -75,15 +78,33 @@
    notice=message
    noticeTimer=setTimeout(()=>{notice='';noticeTimer=undefined},4200)
  }
+ const syncSubtitleTracks=()=>{
+   applySubtitleSelection(playerVideo,ccEnabled?selectedSubtitle:-1)
+ }
+ const toggleCaptions=()=>{
+   if(!selectedPlayback.subtitles.length)return
+   ccEnabled=!ccEnabled
+   syncSubtitleTracks()
+ }
+ const selectCaptionTrack=(index:number)=>{
+   if(!Number.isInteger(index)||index<0||index>=selectedPlayback.subtitles.length)return
+   selectedSubtitle=index
+   ccEnabled=true
+   syncSubtitleTracks()
+ }
  const openMovie=(movie:Movie)=>{
    playbackError=''
    playerVideo=null
+   selectedSubtitle=0
+   ccEnabled=false
    selected=movie
  }
  const closeMovie=()=>{
    playerVideo?.pause()
    playerVideo=null
    selected=null
+   selectedSubtitle=0
+   ccEnabled=false
    playbackError=''
  }
  const enterFullscreen=async()=>{
@@ -498,13 +519,14 @@
         autoplay
         playsinline
         preload="metadata"
+        onloadedmetadata={syncSubtitleTracks}
         poster={selected.backdrop?backdrop(selected.backdrop):selected.poster?poster(selected.poster):undefined}
         onerror={()=>playbackError='Your browser cannot play this MP4 file. Try downloading it or use a browser that supports its video codec.'}
         aria-label={'Playback of '+selected.title}
        >
         <source src={mediaURL(selected.hash,selectedPlayback.video.path)} type="video/mp4"/>
         {#each selectedPlayback.subtitles as sub,i (sub.path)}
-         <track kind="subtitles" src={mediaURL(selected.hash,sub.path)} srclang={sub.language} label={sub.label} default={i===0}/>
+         <track kind="subtitles" src={mediaURL(selected.hash,sub.path)} srclang={sub.language} label={sub.label} onload={syncSubtitleTracks}/>
         {/each}
         Your browser does not support HTML5 video.
        </video>
@@ -519,7 +541,33 @@
         <span>{selectedPlayback.subtitles.length} {selectedPlayback.subtitles.length===1?'subtitle':'subtitles'} available</span>
        {/if}
       </div>
-      <button class="cinema-fullscreen-button" type="button" onclick={enterFullscreen}><Maximize2 size={17}/> Fullscreen</button>
+      <div class="cinema-player-actions">
+       {#if selectedPlayback.subtitles.length}
+        <button
+         class="cinema-cc-button"
+         class:active={ccEnabled}
+         type="button"
+         aria-label={ccEnabled?'Disable captions':'Enable captions'}
+         aria-pressed={ccEnabled}
+         title={ccEnabled?'Turn captions off':'Turn captions on'}
+         onclick={toggleCaptions}
+        >CC</button>
+        {#if ccEnabled}
+         <div class="cinema-caption-languages" role="group" aria-label="Available subtitles">
+          {#each selectedPlayback.subtitles as sub,i (sub.path)}
+           <button
+            type="button"
+            class:active={selectedSubtitle===i}
+            aria-pressed={selectedSubtitle===i}
+            title={'Use '+sub.label+' subtitles'}
+            onclick={()=>selectCaptionTrack(i)}
+           >{sub.label}</button>
+          {/each}
+         </div>
+        {/if}
+       {/if}
+       <button class="cinema-fullscreen-button" type="button" onclick={enterFullscreen}><Maximize2 size={17}/> Fullscreen</button>
+      </div>
      </div>
     {:else}
      <div class="cinema-player-unavailable">

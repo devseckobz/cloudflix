@@ -84,8 +84,12 @@ func ensureMediaSchema(db *sql.DB) error {
 }
 
 func allowedMediaPath(path string)bool{
+ if path=="" || strings.Contains(path,"\\"){return false}
+ for _,part:=range strings.Split(path,"/"){
+  if part=="" || part=="." || part==".."{return false}
+ }
  local:=filepath.FromSlash(path)
- if path=="" || !filepath.IsLocal(local) || filepath.ToSlash(local)!=path{return false}
+ if !filepath.IsLocal(local) || filepath.ToSlash(local)!=path{return false}
  ext:=strings.ToLower(filepath.Ext(path))
  return ext==".mp4" || ext==".srt"
 }

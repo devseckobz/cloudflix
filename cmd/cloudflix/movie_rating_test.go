@@ -31,7 +31,7 @@ func TestTMDBMovieParser(t *testing.T){
   {`{"results":[]}`,"","","",0},
  }
  for _,tc:=range cases{
-  title,year,poster,_,rating,err:=parseTMDBMovie(strings.NewReader(tc.body),"2020")
+  title,year,poster,_,rating,_,err:=parseTMDBMovie(strings.NewReader(tc.body),"2020")
   if err!=nil{t.Fatal(err)}
   if title!=tc.title||year!=tc.year||poster!=tc.poster||math.Abs(rating-tc.rating)>0.001{
    t.Errorf("got %q %q %q %.2f, want %q %q %q %.2f",title,year,poster,rating,tc.title,tc.year,tc.poster,tc.rating)

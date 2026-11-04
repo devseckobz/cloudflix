@@ -244,3 +244,24 @@
 }
 @media(hover:none){.film-play-ring{opacity:.92;transform:scale(.68);width:50px;height:50px;box-shadow:0 8px 25px #0007}.film-watch-label{display:none}}
 @media(prefers-reduced-motion:reduce){.cinema-poster,.cinema-poster img,.film-play-ring,.film-watch-label{transition:none}}
+
+/* Software updater: simple status and one-click action in Settings. */
+.update-settings-panel .settings-panel-icon{background:#23364a;color:#8ac2f4}
+.integration-status.update-available{background:#463322;border-color:#735031;color:#ffc17f}
+.update-versions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:26px 0 15px}
+.update-versions>div{display:flex;flex-direction:column;gap:8px;padding:15px;background:#0d1722;border:1px solid #29394a;border-radius:9px}
+.update-versions span{color:#8f9eaf;font-size:11px}
+.update-versions strong{color:#e7eef7;font-size:16px;letter-spacing:.2px;font-variant-numeric:tabular-nums}
+.update-progress{display:flex;gap:13px;align-items:flex-start;background:#263340;border:1px solid #45536a;border-radius:10px;padding:15px;margin:15px 0;color:#c4d8ef}
+.update-progress>svg{flex-shrink:0;margin-top:1px}
+.update-progress strong{font-size:12px}
+.update-progress p{font-size:12px;line-height:1.65;color:#a9b9ca;margin:5px 0 0}
+.update-status-good,.update-status-error{display:flex;gap:9px;align-items:center;font-size:12px;line-height:1.6;margin:13px 0}
+.update-status-good{color:#7ddeb0}
+.update-status-error{color:#ffaaa9}
+.update-status-good svg,.update-status-error svg{flex:0 0 auto}
+.settings-update-check{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 16px;background:#243040;border:1px solid #394a5f;border-radius:9px;color:#dbe3ec;font-size:12px;font-weight:700}
+.settings-update-check:hover:not(:disabled){background:#304053}
+.settings-update-check:disabled{opacity:.55;cursor:not-allowed}
+.update-buttons .primary:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:600px){.update-versions{grid-template-columns:1fr}.update-buttons{flex-direction:column;align-items:stretch}.update-buttons>button{width:100%}}

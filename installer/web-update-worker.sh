@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Root-owned service helper. It accepts no arguments or URLs from the web.
 set -Eeuo pipefail
-umask 022
+umask 077
 
 REQUEST=/var/lib/cloudflix/update.request
 STATUS_DIR=/var/lib/cloudflix-update

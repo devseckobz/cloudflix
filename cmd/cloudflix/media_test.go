@@ -13,7 +13,7 @@ func TestMediaFileWhitelist(t *testing.T){
  cases:=[]struct{path string;want bool}{
   {"Movie.2026.mp4",true},{"Movie.2026.MP4",true},
   {"Movie.2026.srt",true},{"Movie.2026.en.SRT",true},
-  {"Movie.mkv",false},{"Movie.avi",false},{"Movie.webm",false},
+  {"Movie.mkv",true},{"Movie.avi",false},{"Movie.webm",false},
   {"Movie.vtt",false},{"Movie.exe",false},{"Movie.mp4.exe",false},
   {"../movie.mp4",false},{"sub/../movie.mp4",false},
   {"sub/Movie.mp4",true},
@@ -23,11 +23,13 @@ func TestMediaFileWhitelist(t *testing.T){
  }
 }
 
-func TestSelectMediaFilesRequiresMP4(t *testing.T){
- files,video:=selectedMediaFiles([]string{"movie.mkv","poster.jpg","subtitles.srt","unwanted.exe"})
+func TestSelectMediaFilesRequiresMP4OrMKV(t *testing.T){
+ files,video:=selectedMediaFiles([]string{"poster.jpg","subtitles.srt","unwanted.exe"})
  if video || len(files)!=1 || files[0]!="subtitles.srt"{t.Fatalf("SRT-only torrent must be rejected: %v video=%v",files,video)}
+ files,video=selectedMediaFiles([]string{"movie.mkv","movie.srt","unwanted.exe"})
+ if !video || len(files)!=2{t.Fatalf("MKV and SRT must be selected: %v video=%v",files,video)}
  files,video=selectedMediaFiles([]string{"movie.mp4","movie.en.srt","sample.mkv","installer.sh","readme.txt"})
- if !video || len(files)!=2{t.Fatalf("unexpected file selections: %v",files)}
+ if !video || len(files)!=3{t.Fatalf("unexpected file selections: %v",files)}
 }
 
 func TestServeMediaSupportsRangeRequests(t *testing.T){

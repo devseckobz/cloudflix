@@ -39,7 +39,10 @@ type application struct {
 
 func main() {
  if len(os.Args)>1 && os.Args[1]=="pin"{
-  if err:=pinCommand(os.Args[2:]);err!=nil{log.Fatal(err)}
+  if err:=pinCommand(os.Args[2:]);err!=nil{
+   if errors.Is(err,ErrPINNotConfigured){os.Exit(3)}
+   log.Fatal(err)
+  }
   return
  }
  dataDir:=env("CLOUDFLIX_DATA_DIR","./data")

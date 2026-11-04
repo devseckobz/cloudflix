@@ -29,16 +29,20 @@ function detectSubtitleLanguage(name){
 }
 
 /**
- * Select the largest MP4 as the feature film. Prefer subtitles matching its
+ * Prefer a browser-native MP4, otherwise choose the largest MKV. Prefer subtitles matching its
  * basename; accept language-suffixed companions like film.en.srt.
  * @param {{path:string,size:number,completed?:number}[]} files
  */
 export function findPlayback(files){
- const videos=files.filter(f=>/\.mp4$/i.test(f.path)&&f.size>0)
-   .sort((a,b)=>b.size-a.size||a.path.localeCompare(b.path))
+ const videos=files.filter(f=>/\.(mp4|mkv)$/i.test(f.path)&&f.size>0)
+   .sort((a,b)=>{
+     // When both containers exist, MP4 plays natively without FFmpeg conversion.
+     const aNative=/\.mp4$/i.test(a.path),bNative=/\.mp4$/i.test(b.path)
+     return Number(bNative)-Number(aNative)||b.size-a.size||a.path.localeCompare(b.path)
+   })
  const video=videos[0]??null
  if(!video)return {video:null,subtitles:[]}
- const base=video.path.replace(/\.mp4$/i,'')
+ const base=video.path.replace(/\.(mp4|mkv)$/i,'')
  const videoFile=base.split('/').pop()||base
  const videoDir=base.slice(0,base.length-videoFile.length)
  const subtitles=files.filter(f=>/\.srt$/i.test(f.path)&&f.size>0)

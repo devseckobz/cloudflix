@@ -2,7 +2,7 @@
  import { onMount } from 'svelte'
  import { selectLibraryPage, countDownloading } from './lib/library.js'
  import {findPlayback,mediaURL} from './lib/media.js'
- import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight, Maximize2, Clapperboard as FilmClap, MonitorPlay } from '@lucide/svelte'
+ import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight, Maximize2, Clapperboard as FilmClap, MonitorPlay, RefreshCw, ArrowUpCircle } from '@lucide/svelte'
 
  type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
  let page = $state<'home'|'downloader'|'settings'>(typeof window!=='undefined'&&window.location.pathname==='/settings'?'settings':typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
@@ -27,6 +27,11 @@
  let settingsBusy = $state(false)
  let settingsLoading = $state(false)
  let tmdbChecked = $state(false)
+ type UpdateInfo = {currentVersion:string,latestVersion:string,updateAvailable:boolean,updaterReady:boolean,state:string,message:string,updatedAt:number,checkError?:string}
+ let updateInfo = $state<UpdateInfo|null>(null)
+ let updateChecking = $state(false)
+ let updateBusy = $state(false)
+ let updateError = $state('')
  const navigate=(destination:'home'|'downloader'|'settings')=>{
    if(destination==='settings'||destination==='downloader')void loadSettings()
    page=destination
@@ -86,6 +91,30 @@
      else (video as HTMLVideoElement & {webkitEnterFullscreen?:()=>void}).webkitEnterFullscreen?.()
    }catch{playbackError='Fullscreen is unavailable in this browser. You can also use the video controls.'}
  }
+ const loadUpdateInfo=async(quiet=false)=>{
+   if(!quiet)updateChecking=true
+   try{
+     const data=await call('updates')
+     updateInfo=data as UpdateInfo
+     updateError=''
+   }catch(e){
+     if(!quiet)updateError=(e as Error).message
+   }finally{
+     if(!quiet)updateChecking=false
+   }
+ }
+ const startUpdate=async()=>{
+   if(!updateInfo?.updateAvailable||!updateInfo.updaterReady||updateBusy)return
+   if(!confirm('Install Cloudflix '+updateInfo.latestVersion+' now? Your server will restart briefly and your movies will be preserved.'))return
+   updateBusy=true
+   updateError=''
+   try{
+     await call('updates','POST',{})
+     notify('Update requested. Cloudflix will restart automatically.')
+     await loadUpdateInfo(true)
+   }catch(e){updateError=(e as Error).message}
+   finally{updateBusy=false}
+ }
  const loadSettings=async()=>{
    settingsLoading=true
    try{
@@ -93,7 +122,10 @@
      tmdbConfigured=Boolean(result.tmdbConfigured)
      tmdbChecked=true
    }catch(e){error=(e as Error).message}
-   finally{settingsLoading=false}
+   finally{
+     settingsLoading=false
+     if(page==='settings')void loadUpdateInfo(true)
+   }
  }
  const saveTMDB=async()=>{
    if(!tmdbToken.trim()){error='Paste a TMDB API key or Read Access Token first';return}
@@ -137,7 +169,10 @@
    const handleBack=()=>{page=window.location.pathname==='/settings'?'settings':window.location.pathname==='/downloader'?'downloader':'home';if(page==='settings'||page==='downloader')void loadSettings()}
    window.addEventListener('popstate',handleBack)
    checkAuth()
-   return ()=>{live?.close();if(noticeTimer!==undefined)clearTimeout(noticeTimer);window.removeEventListener('popstate',handleBack)}
+   const updaterPoll=setInterval(()=>{
+     if(page==='settings'&&auth==='ready')void loadUpdateInfo(true)
+   },4500)
+   return ()=>{live?.close();clearInterval(updaterPoll);if(noticeTimer!==undefined)clearTimeout(noticeTimer);window.removeEventListener('popstate',handleBack)}
  })
  const authenticate=async()=>{
    error=''
@@ -336,6 +371,48 @@
        <p class="settings-help">Get your token from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">TMDB account settings</a>. Both the <strong>32-character API key</strong> and the <strong>API Read Access Token</strong> are supported.</p>
       </form>
      </section>
+     <section class="settings-panel update-settings-panel" aria-label="Software updates">
+      <div class="settings-panel-header">
+       <div class="settings-panel-icon"><RefreshCw size={23}/></div>
+       <div class="settings-panel-intro">
+        <h2>Software Updates</h2>
+        <p>Keep Cloudflix current with verified binaries from GitHub Releases. Your downloads and PIN stay intact.</p>
+       </div>
+       {#if updateInfo?.updateAvailable}
+        <span class="integration-status update-available">● Update available</span>
+       {:else if updateInfo && !updateInfo.checkError}
+        <span class="integration-status configured">● Up to date</span>
+       {/if}
+      </div>
+      <div class="update-versions">
+       <div><span>Installed version</span><strong>{updateInfo?.currentVersion||version}</strong></div>
+       <div><span>Latest release</span><strong>{updateChecking?'Checking…':updateInfo?.latestVersion||'—'}</strong></div>
+      </div>
+      {#if updateInfo?.state==='running'||updateInfo?.state==='queued'}
+       <div class="update-progress" role="status"><LoaderCircle size={18} class="spin"/><div><strong>Updating Cloudflix</strong><p>{updateInfo?.message||'Installing the latest release…'} This page will reconnect when the service restarts.</p></div></div>
+      {:else if updateInfo?.state==='success'&&!updateInfo?.updateAvailable}
+       <p class="update-status-good"><CheckCircle2 size={16}/> Your update finished successfully.</p>
+      {:else if updateInfo?.state==='error'}
+       <p class="update-status-error"><AlertCircle size={16}/>{updateInfo.message}</p>
+      {/if}
+      {#if updateInfo?.checkError}
+       <p class="settings-hint">{updateInfo.checkError}</p>
+      {/if}
+      {#if updateError}<p class="update-status-error" role="alert"><AlertCircle size={16}/>{updateError}</p>{/if}
+      {#if updateInfo&&!updateInfo.updaterReady}
+       <p class="settings-warning"><AlertCircle size={16}/> The web updater isn't installed. Run the one-line update command from your VPS terminal once to enable this feature.</p>
+      {/if}
+      <div class="settings-actions update-buttons">
+       <button type="button" class="settings-update-check" disabled={updateChecking||updateBusy} onclick={()=>loadUpdateInfo()}><RefreshCw size={17}/> {updateChecking?'Checking…':'Check for updates'}</button>
+       {#if updateInfo?.updateAvailable}
+        <button type="button" class="primary" disabled={updateBusy||!updateInfo.updaterReady||updateInfo.state==='running'||updateInfo.state==='queued'} onclick={startUpdate}>
+         {#if updateBusy}<LoaderCircle size={17} class="spin"/>{:else}<ArrowUpCircle size={17}/>{/if}
+         Update to {updateInfo.latestVersion}
+        </button>
+       {/if}
+      </div>
+      <p class="settings-hint">Updates run through a restricted, root-owned systemd helper. The web app cannot run arbitrary commands.</p>
+     </section>
      <section class="settings-panel">
       <div class="settings-panel-header">
        <div class="settings-panel-icon"><HardDrive size={23}/></div>
@@ -345,9 +422,9 @@
        </div>
       </div>
       <div class="settings-info">
-       <span>Current server</span><strong>{typeof window!=='undefined'?window.location.host:'VPS_IP:3000'}</strong>
+       <span>Current server</span><strong>{typeof window!=='undefined'?window.location.host :'VPS_IP'}</strong>
       </div>
-      <p class="settings-warning"><AlertCircle size={16}/> Direct HTTP access is unencrypted. On an untrusted network your PIN, session cookies, and any TMDB token submitted here may be intercepted. Restrict port 3000 to trusted IP addresses where possible.</p>
+      <p class="settings-warning"><AlertCircle size={16}/> Direct HTTP access is unencrypted. On an untrusted network your PIN, session cookies, and any TMDB token submitted here may be intercepted. Restrict port 80 to trusted IP addresses where possible.</p>
      </section>
     </div>
    {:else}

@@ -3,7 +3,6 @@ package main
 import (
  "context"
  "database/sql"
- "encoding/json"
  "errors"
  "io"
  "net/http"
@@ -37,6 +36,7 @@ type entry struct {
  retryAt time.Time
  validated bool
  rejectionReason string
+ fileManifest *torrentFileManifest // transient torrent metadata; never stored in SQLite
 }
 type engine struct{
  mu sync.Mutex
@@ -175,36 +175,30 @@ func buildFileManifest(files []manifestFile,hasMovie bool)torrentFileManifest{
  return manifest
 }
 
-// Older installations didn't retain the inspected file list for rejected magnets.
-func ensureFileManifestSchema(db *sql.DB)error{
+// Purge persistent lists left by v0.1.14. New installations never create
+// the file_manifest column, and no code writes these filenames to SQLite.
+func purgeLegacyFileManifests(db *sql.DB)error{
  rows,err:=db.Query("PRAGMA table_info(torrents)")
  if err!=nil{return err}
- found:=false
+ exists:=false
  for rows.Next(){
   var index,required,pk int
   var name,typ string
   var def sql.NullString
   if err:=rows.Scan(&index,&name,&typ,&required,&def,&pk);err!=nil{rows.Close();return err}
-  if name=="file_manifest"{found=true}
+  if name=="file_manifest"{exists=true}
  }
  if err:=rows.Err();err!=nil{rows.Close();return err}
  if err:=rows.Close();err!=nil{return err}
- if found{return nil}
- _,err=db.Exec("ALTER TABLE torrents ADD COLUMN file_manifest TEXT NOT NULL DEFAULT ''")
- return err
-}
-
-func (e *engine) saveFileManifestLocked(item *entry,manifest torrentFileManifest)error{
- data,err:=json.Marshal(manifest)
- if err!=nil{return err}
- _,err=e.db.Exec("UPDATE torrents SET file_manifest=? WHERE hash=?",string(data),item.hash)
+ if !exists{return nil}
+ _,err=db.Exec("UPDATE torrents SET file_manifest='' WHERE file_manifest!=''")
  return err
 }
 
 func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  if err:=ensureMovieRatingSchema(db);err!=nil{return nil,err}
  if err:=ensureMediaSchema(db);err!=nil{return nil,err}
- if err:=ensureFileManifestSchema(db);err!=nil{return nil,err}
+ if err:=purgeLegacyFileManifests(db);err!=nil{return nil,err}
  config:=torrent.NewDefaultClientConfig()
  config.DataDir=downloads
  config.Seed=false
@@ -280,10 +274,9 @@ func (e *engine) startWhenReady(item *entry){
   }
   manifest:=buildFileManifest(rawFiles,hasVideo)
   manifest.Total=len(torrentFiles)
-  if err:=e.saveFileManifestLocked(item,manifest);err!=nil{
-   e.rejectTorrentLocked(item,"Unable to save torrent file list. No files were downloaded.")
-   return
-  }
+  // Keep the inspected filenames only until the process restarts or Delete
+  // is clicked. Rejected torrents never request payload pieces.
+  item.fileManifest=&manifest
   if !hasVideo{
    e.rejectTorrentLocked(item,"Rejected: torrent contains no .mp4 movie. Only .mp4 and .srt files are permitted.")
    return
@@ -367,7 +360,16 @@ func (e *engine) action(hash,action string)error{
   if item.validated{item.torrent.AllowDataDownload()}
  case "remove":
   if _,err:=e.db.Exec("DELETE FROM torrents WHERE hash=?",hash);err!=nil{return err}
-  if item.torrent!=nil{item.torrent.Drop()}
+  if item.torrent!=nil{
+   item.torrent.DisallowDataDownload()
+   item.torrent.Drop()
+   item.torrent=nil
+  }
+  // Delete the cached filenames and queue entry together. Rejected torrents
+  // never downloaded payload bytes, so there are no owned movie files to
+  // remove from the shared downloads directory. Do not remove files by
+  // untrusted metadata paths: they may overlap other valid torrents.
+  item.fileManifest=nil
   delete(e.entries,hash)
  default:return errors.New("unknown action")
  }

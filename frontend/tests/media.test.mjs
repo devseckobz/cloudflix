@@ -17,8 +17,13 @@ test('player chooses largest MP4 and detects matching and language subtitles',()
  assert.equal(result.subtitles.find(s=>s.path.includes('.en.srt'))?.language,'en')
 })
 
-test('non-MP4 files cannot be selected as movie video',()=>{
- const playback=findPlayback([{path:'movie.mkv',size:1500},{path:'subtitles.srt',size:400}])
+test('MKV is chosen when no MP4 exists, with external SRT subtitles',()=>{
+ const playback=findPlayback([{path:'movie.mkv',size:1500},{path:'movie.srt',size:400}])
+ assert.equal(playback.video?.path,'movie.mkv')
+ assert.equal(playback.subtitles[0]?.path,'movie.srt')
+})
+test('unsupported file types cannot be used as movie video',()=>{
+ const playback=findPlayback([{path:'movie.avi',size:1500},{path:'movie.srt',size:400}])
  assert.equal(playback.video,null)
  assert.equal(playback.subtitles.length,0)
 })

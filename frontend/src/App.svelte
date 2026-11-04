@@ -225,7 +225,20 @@
      pin=''
    }finally{submitting=false}
  }
- const signOut=async()=>{closeMovie();try{await call('auth/logout','POST',{})}catch{}live?.close();connected=false;auth='login';movies=[]}
+ const signOut=async()=>{
+   try{
+     await call('auth/logout','POST',{})
+     live?.close()
+     closeMovie()
+     connected=false
+     movies=[]
+     pin=''
+     // Replace the deep-link history entry, then load the signed-out root.
+     window.location.replace('/')
+   }catch(e){
+     error=(e as Error).message
+   }
+ }
  const add=async()=>{
    error='';notice='';submitting=true
    try{
@@ -274,8 +287,7 @@
  <div class="auth-screen auth-minimal">
   <form class="auth-card auth-compact" novalidate onsubmit={(e)=>{e.preventDefault();void authenticate()}}>
    <div class="auth-wordmark"><span class="auth-logo"><Film size={23} strokeWidth={2.2}/></span><span>cloud<strong>flix</strong></span></div>
-   <label for="pin">6-digit access PIN</label>
-   <input id="pin" class="pin-field" type="password" inputmode="numeric" maxlength="6" autocomplete="off" bind:value={pin} oninput={(event)=>{const digits=event.currentTarget.value.replace(/[^0-9]/g,'').slice(0,6);event.currentTarget.value=digits;pin=digits;error=''}} placeholder="••••••" aria-invalid={Boolean(error)} />
+   <input id="pin" class="pin-field" aria-label="Access PIN" type="password" inputmode="numeric" maxlength="6" autocomplete="off" bind:value={pin} oninput={(event)=>{const digits=event.currentTarget.value.replace(/[^0-9]/g,'').slice(0,6);event.currentTarget.value=digits;pin=digits;error=''}} placeholder="••••••" aria-invalid={Boolean(error)} />
    {#if error}<div class="auth-error" role="alert"><AlertCircle size={16}/><span>{error}</span></div>{/if}
    <button class="primary auth-submit" disabled={submitting||pin.length!==6} type="submit">{#if submitting}<LoaderCircle size={17} class="spin"/>{:else}Continue <span aria-hidden="true">→</span>{/if}</button>
    <span class="auth-footer">Your personal movie space</span>

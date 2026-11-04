@@ -17,6 +17,7 @@
  let submitting = $state(false)
  let search = $state('')
  let libraryPage = $state(1)
+ let queueFilter = $state<'all'|'active'|'completed'>('all')
  let selected = $state<Movie|null>(null)
  let playerVideo = $state<HTMLVideoElement|null>(null)
  let playbackError = $state('')
@@ -56,6 +57,7 @@
  const completed = $derived(movies.filter(m=>m.status==='completed').length)
  const active = $derived(countDownloading(movies))
  const libraryView = $derived(selectLibraryPage(movies,search,libraryPage,10))
+ const queueItems = $derived(movies.filter(m=>queueFilter==='all'||(queueFilter==='active'&&m.status!=='completed'&&m.status!=='rejected')||(queueFilter==='completed'&&m.status==='completed')))
  const selectedPlayback = $derived(selected?findPlayback(selected.files):{video:null,subtitles:[]})
  const call = async (path:string,method='GET',data?:object)=>{
    let response:Response
@@ -298,6 +300,13 @@
    <header class="topbar">
     <div class="mobile-brand brand"><span class="brand-icon"><Film size={19}/></span><strong>cloud<span>flix</span></strong></div>
     {#if page==='home'}
+     <nav class="top-library-pagination" aria-label="Movie pages">
+      <button type="button" aria-label="Previous page" disabled={libraryView.page===1} onclick={()=>libraryPage=libraryView.page-1}><ChevronLeft size={16}/></button>
+      {#each libraryView.pages as number}
+       <button type="button" class:active={libraryView.page===number} aria-label={'Page '+number} aria-current={libraryView.page===number?'page':undefined} onclick={()=>libraryPage=number}>{number}</button>
+      {/each}
+      <button type="button" aria-label="Next page" disabled={libraryView.page===libraryView.totalPages} onclick={()=>libraryPage=libraryView.page+1}><ChevronRight size={16}/></button>
+     </nav>
      <label class="nav-movie-search">
       <Search size={18}/>
       <input value={search} oninput={(event)=>{search=event.currentTarget.value;libraryPage=1}} placeholder="Search movies" aria-label="Search downloaded movies"/>
@@ -333,18 +342,7 @@
         </button>
        {/each}
       </div>
-      <nav class="movie-library-pagination" aria-label="Movie pages">
-       <span>Showing {libraryView.from}–{libraryView.to} of {libraryView.total}</span>
-       {#if libraryView.totalPages>1}
-        <div class="movie-pagination-buttons">
-         <button type="button" aria-label="Previous page" disabled={libraryView.page===1} onclick={()=>libraryPage=libraryView.page-1}><ChevronLeft size={16}/></button>
-         {#each libraryView.pages as number}
-          <button type="button" class:active={libraryView.page===number} aria-label={'Page '+number} aria-current={libraryView.page===number?'page':undefined} onclick={()=>libraryPage=number}>{number}</button>
-         {/each}
-         <button type="button" aria-label="Next page" disabled={libraryView.page===libraryView.totalPages} onclick={()=>libraryPage=libraryView.page+1}><ChevronRight size={16}/></button>
-        </div>
-       {/if}
-      </nav>
+      <p class="library-results-count">Showing {libraryView.from}–{libraryView.to} of {libraryView.total}</p>
      {:else}
       <div class="movie-library-empty">
        {#if search.trim()}
@@ -444,58 +442,111 @@
     </div>
    {:else}
     <div class="dashboard-content download-page">
-     <div class="stat-grid downloader-stats">
-      <div class="stat"><div class="stat-icon red"><Clapperboard size={20}/></div><div><span>Total downloads</span><strong>{movies.length}</strong></div></div>
-      <div class="stat"><div class="stat-icon blue"><Download size={20}/></div><div><span>Downloading</span><strong>{active}</strong></div></div>
-      <div class="stat"><div class="stat-icon green"><CheckCircle2 size={20}/></div><div><span>Completed</span><strong>{completed}</strong></div></div>
-      <div class="stat"><div class="stat-icon purple"><HardDrive size={20}/></div><div><span>Downloaded</span><strong>{formatBytes(movies.reduce((a,m)=>a+m.completed,0))}</strong></div></div>
+     <div class="downloader-heading">
+      <div>
+       <h1>Downloads</h1>
+       <p>Add movies and track their progress.</p>
+      </div>
+      <span class="downloader-online"><span class:online={connected} class="status-dot"></span>{connected?'Connected':'Reconnecting'}</span>
      </div>
-     <div class="page-title"><div><div class="eyebrow"><span class="red-dot"></span> DOWNLOAD MANAGER</div><h1>Downloader</h1><p>Add magnet links and manage your downloads from anywhere.</p></div></div>
+     <div class="stat-grid downloader-stats">
+      <div class="stat"><div class="stat-icon red"><Clapperboard size={19}/></div><div><span>All downloads</span><strong>{movies.length}</strong></div></div>
+      <div class="stat"><div class="stat-icon blue"><Download size={19}/></div><div><span>Downloading</span><strong>{active}</strong></div></div>
+      <div class="stat"><div class="stat-icon green"><CheckCircle2 size={19}/></div><div><span>Completed</span><strong>{completed}</strong></div></div>
+      <div class="stat"><div class="stat-icon purple"><HardDrive size={19}/></div><div><span>Downloaded</span><strong>{formatBytes(movies.reduce((a,m)=>a+m.completed,0))}</strong></div></div>
+     </div>
      {#if tmdbChecked&&!tmdbConfigured&&!settingsLoading}
       <div class="tmdb-required" role="alert">
        <AlertCircle size={20}/>
-       <div><strong>TMDB API key required</strong><p>Configure your TMDB API key in Settings before downloading a movie.</p></div>
+       <div><strong>TMDB API key required</strong><p>Set your TMDB API key in Settings before downloading a movie.</p></div>
        <button type="button" onclick={()=>navigate('settings')}><Settings size={16}/> Open Settings</button>
       </div>
      {/if}
-     <form class="magnet-form" onsubmit={(e)=>{e.preventDefault();add()}}>
-      <div class="form-head"><span class="form-icon"><Plus size={22}/></span><div><h2>Add a new download</h2><p>Paste a magnet URI to start downloading to your VPS.</p></div></div>
-      <label for="magnet">MAGNET URI</label>
-      <textarea id="magnet" bind:value={magnet} placeholder="magnet:?xt=urn:btih:..." rows="3" required></textarea>
-      <div class="form-footer"><span>Only download content you're authorized to use.</span><button class="primary" type="submit" disabled={submitting||!magnet.trim()||(tmdbChecked&&!tmdbConfigured)}>{#if submitting}<LoaderCircle size={17}/>{:else}<ArrowDownToLine size={17}/>{/if} Start Download</button></div>
-     </form>
-     <div class="section-heading"><div><h2>Download Queue</h2><p>{movies.length} total · {active} active · {completed} completed</p></div></div>
-     {#if movies.length}
-      <div class="download-list">
-      {#each movies as m (m.hash)}
-       <article class="download-item" class:download-rejected={m.status==='rejected'}>
-        <div class="download-art">{#if m.poster}<img src={poster(m.poster)} alt="" />{:else}<Film size={30}/>{/if}</div>
-        <div class="download-info">
-         <div class="download-top"><h3>{m.title}</h3><span class:complete={m.status==='completed'} class:rejected={m.status==='rejected'} class="status-pill">{m.status==='metadata'?'Checking files':m.status}</span></div>
-         {#if m.status==='rejected'}
-          <p class="torrent-rejection"><AlertCircle size={15}/> {m.error||'Torrent rejected. Only MP4 movies and SRT subtitles are supported.'}</p>
-         {:else if m.status==='metadata'}
-          <p>Inspecting torrent files before downloading…</p>
-         {:else}
-          <p>{formatBytes(m.completed)} / {formatBytes(m.size)} {m.year?'· '+m.year:''}</p>
-          <div class="progress-track"><div class="progress-fill" style:width={percent(m)+'%'}></div></div>
-          <div class="download-meta"><span>{percent(m).toFixed(1)}% complete</span><span>{m.files.length} selected .mp4 / .srt files</span></div>
-         {/if}
-        </div>
-        <div class="download-actions">
-         {#if m.status==='paused'}<button title="Resume" onclick={()=>action(m,'resume')}><Play size={18}/></button>{:else if m.status==='downloading'}<button title="Pause" onclick={()=>action(m,'pause')}><Pause size={18}/></button>{/if}
-         {#if m.status!=='rejected'}<button title={m.status==='completed'?'Watch movie':'Movie files'} onclick={()=>openMovie(m)}><MonitorPlay size={18}/></button>{/if}
-         <button class="danger" title="Remove from queue" onclick={()=>action(m,'remove')}><Trash2 size={18}/></button>
-        </div>
-       </article>
-      {/each}
+     <section class="downloader-magnet-panel" aria-label="Add a movie download">
+      <form class="magnet-form downloader-magnet-form" onsubmit={(e)=>{e.preventDefault();void add()}}>
+       <div class="magnet-panel-heading">
+        <div><h2>Add a download</h2><p>Paste a magnet link to add a movie to your queue.</p></div>
+        <span class="magnet-media-hint">MP4 + SRT only</span>
+       </div>
+       <label for="magnet">MAGNET LINK</label>
+       <div class="magnet-entry-row">
+        <textarea id="magnet" bind:value={magnet} placeholder="magnet:?xt=urn:btih:..." rows="2" required spellcheck="false"></textarea>
+        <button class="primary magnet-add-button" type="submit" disabled={submitting||!magnet.trim()||(tmdbChecked&&!tmdbConfigured)}>
+         {#if submitting}<LoaderCircle size={17} class="spin"/>{:else}<Plus size={18}/>{/if}
+         Add download
+        </button>
+       </div>
+       <p class="magnet-disclaimer">Only download content you're authorized to use.</p>
+      </form>
+     </section>
+     <section class="download-queue-section" aria-label="Download queue">
+      <div class="download-queue-toolbar">
+       <div class="download-queue-heading">
+        <h2>Queue <span>{movies.length}</span></h2>
+        <p>{active} downloading · {completed} completed</p>
+       </div>
+       <div class="download-queue-filters" role="group" aria-label="Filter downloads">
+        <button type="button" class:active={queueFilter==='all'} aria-pressed={queueFilter==='all'} onclick={()=>queueFilter='all'}>All</button>
+        <button type="button" class:active={queueFilter==='active'} aria-pressed={queueFilter==='active'} onclick={()=>queueFilter='active'}>In progress</button>
+        <button type="button" class:active={queueFilter==='completed'} aria-pressed={queueFilter==='completed'} onclick={()=>queueFilter='completed'}>Completed</button>
+       </div>
       </div>
-     {:else}
-      <div class="empty"><div class="empty-icon"><Download size={34}/></div><h3>No downloads yet</h3><p>Paste a magnet link above and your download will appear here.</p></div>
-     {/if}
+      {#if queueItems.length}
+       <div class="download-list queue-list">
+        {#each queueItems as m (m.hash)}
+         <article class="download-item queue-item" class:download-rejected={m.status==='rejected'}>
+          <div class="download-art queue-art">
+           {#if m.poster}<img src={poster(m.poster)} alt="" loading="lazy"/>{:else}<Film size={28}/>{/if}
+          </div>
+          <div class="download-info queue-info">
+           <div class="download-top queue-item-heading">
+            <h3 title={m.title}>{m.title}</h3>
+            <span class="status-pill" class:complete={m.status==='completed'} class:rejected={m.status==='rejected'}>{m.status==='metadata'?'Checking files':m.status==='completed'?'Completed':m.status}</span>
+           </div>
+           {#if m.status==='rejected'}
+            <p class="torrent-rejection"><AlertCircle size={14}/> {m.error||'Only MP4 movies and SRT subtitles are supported.'}</p>
+           {:else}
+            <div class="queue-file-info">
+             {#if m.year}<span>{m.year}</span><span class="queue-meta-sep">·</span>{/if}
+             <span>{formatBytes(m.completed)} / {formatBytes(m.size)}</span>
+             {#if m.status==='completed'}<span class="queue-ready"><CheckCircle2 size={13}/> Ready to watch</span>{/if}
+            </div>
+            {#if m.status==='downloading'||m.status==='paused'}
+             <div class="queue-progress">
+              <div class="progress-track" role="progressbar" aria-label={m.title+' download progress'} aria-valuenow={percent(m)} aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style:width={percent(m)+'%'}></div></div>
+              <span>{percent(m).toFixed(1)}%</span>
+             </div>
+            {:else if m.status==='metadata'}
+             <p class="queue-processing">Inspecting torrent metadata before downloading…</p>
+            {/if}
+           {/if}
+          </div>
+          <div class="download-actions queue-actions">
+           {#if m.status==='paused'}
+            <button type="button" title="Resume" aria-label={'Resume '+m.title} onclick={()=>action(m,'resume')}><Play size={18}/></button>
+           {:else if m.status==='downloading'}
+            <button type="button" title="Pause" aria-label={'Pause '+m.title} onclick={()=>action(m,'pause')}><Pause size={18}/></button>
+           {/if}
+           {#if m.status==='completed'}
+            <button type="button" class="queue-watch-button" title={'Watch '+m.title} onclick={()=>openMovie(m)}><MonitorPlay size={17}/><span>Watch</span></button>
+           {/if}
+           <button type="button" class="danger" title={'Remove '+m.title+' from queue'} aria-label={'Remove '+m.title} onclick={()=>action(m,'remove')}><Trash2 size={17}/></button>
+          </div>
+         </article>
+        {/each}
+       </div>
+      {:else}
+       <div class="queue-empty">
+        <Download size={25}/>
+        <h3>{movies.length?'No downloads in this view':'Your queue is empty'}</h3>
+        <p>{movies.length?'Try a different filter.':'Add a magnet link above to start downloading.'}</p>
+        {#if movies.length}<button type="button" onclick={()=>queueFilter='all'}>Show all downloads</button>{/if}
+       </div>
+      {/if}
+     </section>
     </div>
    {/if}
-   <footer class="footer"><span>© Cloudflix · Self-hosted with ❤️</span><span>Movie data from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer">TMDB</a>; not endorsed or certified by TMDB.</span></footer>
+   <footer class="footer"><span>© Cloudflix · Made with ❤️ by Kobz</span><span>Movie data from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer">TMDB</a>; not endorsed or certified by TMDB.</span></footer>
   </main>
   <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>navigate('home')}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={20}/> Downloader {#if active>0}<span class="mobile-download-count" aria-label={active+' active downloads'}>{active}</span>{/if}</button><button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={20}/> Settings</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
  </div>

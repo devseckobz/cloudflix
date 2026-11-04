@@ -217,7 +217,7 @@
    {:else if page==='settings'}
     <div class="dashboard-content settings-page">
      <div class="page-title">
-      <div class="eyebrow"><span class="red-dot"></span> CLOUDFlIX CONFIGURATION</div>
+      <div class="eyebrow"><span class="red-dot"></span> CLOUDFLIX CONFIGURATION</div>
       <h1>Settings</h1>
       <p>Manage integrations and your server preferences.</p>
      </div>
@@ -246,7 +246,7 @@
        <div class="settings-panel-icon"><HardDrive size={23}/></div>
        <div class="settings-panel-intro">
         <h2>Server Access</h2>
-        <p>Access Cloudflix using your VPS IP address and port 3000.</p>
+        <p>Access Cloudflix directly using your VPS IP address on default HTTP port 80.</p>
        </div>
       </div>
       <div class="settings-info">

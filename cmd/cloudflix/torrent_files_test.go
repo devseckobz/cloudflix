@@ -96,12 +96,14 @@ func TestRejectedFilesAreOnlyAvailableDuringCurrentProcess(t *testing.T){
  if err:=json.Unmarshal(response.Body.Bytes(),&body);err!=nil{t.Fatal(err)}
  if !body.Available || !body.Rejected || body.Total!=2 || len(body.Files)!=2{t.Fatalf("expected temporary metadata: %+v",body)}
  if body.Files[0].Path!="Movie.mkv" || body.Files[0].Selected{t.Fatal("unexpected rejected file selection")}
- // New process reconstructs the record but does not load filenames from disk.
- fresh:=&application{engine:&engine{entries:map[string]*entry{hash:{hash:hash,rejectionReason:item.rejectionReason}}}}
+ // A new process does not load file names from a database. When a
+ // tracker client is available the Files endpoint re-fetches metadata; this
+ // fixture has no client, so the endpoint must respond with an honest error.
+ fresh:=&application{engine:&engine{entries:map[string]*entry{hash:{hash:hash,rejectionReason:item.rejectionReason,magnet:"magnet:?xt=urn:btih:"+hash}}}}
  again:=httptest.NewRecorder()
  fresh.torrentFiles(again,req)
- if again.Code!=200 || !strings.Contains(again.Body.String(),"Temporary file metadata is unavailable"){
-  t.Fatalf("restarted rejected torrent should not persist metadata: %d %s",again.Code,again.Body.String())
+ if again.Code!=200 || !strings.Contains(again.Body.String(),"The saved magnet is unavailable") || strings.Contains(again.Body.String(),"Movie.mkv"){
+  t.Fatalf("restarted rejected torrent must not serve persisted filenames: %d %s",again.Code,again.Body.String())
  }
 }
 

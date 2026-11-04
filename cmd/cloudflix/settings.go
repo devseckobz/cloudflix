@@ -6,7 +6,6 @@ import (
  "errors"
  "io"
  "net/http"
- "net/url"
  "strings"
  "time"
 )
@@ -113,7 +112,3 @@ func (a *application) saveSettings(w http.ResponseWriter,r *http.Request){
  a.tmdbKey=key
  respond(w,http.StatusOK,map[string]any{"saved":true,"tmdbConfigured":key!=""})
 }
-
-// Limit outbound validation calls to a fixed TMDB HTTPS host. Never accept
-// a user-provided URL as a credential verification endpoint.
-var _ = url.Values{}

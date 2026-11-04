@@ -177,6 +177,13 @@ func (e *engine) startWhenReady(item *entry){
   paths:=make([]string,0)
   for _,file:=range tt.Files(){paths=append(paths,filepath.ToSlash(file.Path()))}
   _,hasVideo:=selectedMediaFiles(paths)
+  // Empty MP4 placeholder files must not qualify as playable movies.
+  if hasVideo{
+   hasVideo=false
+   for _,file:=range tt.Files(){
+    if strings.EqualFold(filepath.Ext(file.Path()),".mp4") && file.Length()>0 && allowedMediaPath(filepath.ToSlash(file.Path())){hasVideo=true;break}
+   }
+  }
   if !hasVideo{
    e.rejectTorrentLocked(item,"Rejected: torrent contains no .mp4 movie. Only .mp4 and .srt files are permitted.")
    return
@@ -228,9 +235,10 @@ func (e *engine) add(magnet string)(string,error){
  if len(e.entries)>=100{return "",errors.New("torrent limit reached (100)")}
  tt,err:=e.client.AddMagnet(magnet)
  if err!=nil{return "",errors.New("invalid or unsupported magnet")}
- tt.DisallowDataDownload()
  hash:=tt.InfoHash().HexString()
+ // A duplicate request must not pause the already validated torrent.
  if _,exists:=e.entries[hash];exists{return hash,nil}
+ tt.DisallowDataDownload()
  if _,err=e.db.Exec("INSERT INTO torrents(hash,magnet) VALUES(?,?)",hash,magnet);err!=nil{tt.Drop();return "",err}
  item:=&entry{hash:hash,magnet:magnet,torrent:tt}
  e.entries[hash]=item

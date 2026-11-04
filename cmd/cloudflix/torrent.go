@@ -147,9 +147,64 @@ func selectedFileStats(tt *torrent.Torrent)(size,completed int64,files []map[str
  return
 }
 
+// Keep file listings small enough for the API while preserving the full count.
+const maxManifestFiles=300
+const maxManifestPathBytes=1024
+
+type manifestFile struct {
+ Path string `json:"path"`
+ Size int64 `json:"size"`
+ Selected bool `json:"selected"`
+}
+
+type torrentFileManifest struct {
+ Files []manifestFile `json:"files"`
+ Total int `json:"total"`
+}
+
+// Only filenames and sizes are stored. No torrent data is downloaded by inspection.
+func buildFileManifest(files []manifestFile,hasMovie bool)torrentFileManifest{
+ manifest:=torrentFileManifest{Files:make([]manifestFile,0),Total:len(files)}
+ for _,file:=range files{
+  if len(manifest.Files)>=maxManifestFiles{break}
+  if len(file.Path)>maxManifestPathBytes || file.Path==""{continue}
+  if file.Size<0{file.Size=0}
+  file.Selected=hasMovie && file.Size>0 && allowedMediaPath(file.Path)
+  manifest.Files=append(manifest.Files,file)
+ }
+ return manifest
+}
+
+// Older installations didn't retain the inspected file list for rejected magnets.
+func ensureFileManifestSchema(db *sql.DB)error{
+ rows,err:=db.Query("PRAGMA table_info(torrents)")
+ if err!=nil{return err}
+ found:=false
+ for rows.Next(){
+  var index,required,pk int
+  var name,typ string
+  var def sql.NullString
+  if err:=rows.Scan(&index,&name,&typ,&required,&def,&pk);err!=nil{rows.Close();return err}
+  if name=="file_manifest"{found=true}
+ }
+ if err:=rows.Err();err!=nil{rows.Close();return err}
+ if err:=rows.Close();err!=nil{return err}
+ if found{return nil}
+ _,err=db.Exec("ALTER TABLE torrents ADD COLUMN file_manifest TEXT NOT NULL DEFAULT ''")
+ return err
+}
+
+func (e *engine) saveFileManifestLocked(item *entry,manifest torrentFileManifest)error{
+ data,err:=json.Marshal(manifest)
+ if err!=nil{return err}
+ _,err=e.db.Exec("UPDATE torrents SET file_manifest=? WHERE hash=?",string(data),item.hash)
+ return err
+}
+
 func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  if err:=ensureMovieRatingSchema(db);err!=nil{return nil,err}
  if err:=ensureMediaSchema(db);err!=nil{return nil,err}
+ if err:=ensureFileManifestSchema(db);err!=nil{return nil,err}
  config:=torrent.NewDefaultClientConfig()
  config.DataDir=downloads
  config.Seed=false
@@ -204,15 +259,27 @@ func (e *engine) startWhenReady(item *entry){
   e.mu.Lock()
   defer e.mu.Unlock()
   if e.entries[item.hash]!=item || item.torrent!=tt{return}
-  paths:=make([]string,0)
-  for _,file:=range tt.Files(){paths=append(paths,filepath.ToSlash(file.Path()))}
-  _,hasVideo:=selectedMediaFiles(paths)
-  // Empty MP4 placeholder files must not qualify as playable movies.
-  if hasVideo{
-   hasVideo=false
-   for _,file:=range tt.Files(){
-    if strings.EqualFold(filepath.Ext(file.Path()),".mp4") && file.Length()>0 && allowedMediaPath(filepath.ToSlash(file.Path())){hasVideo=true;break}
-   }
+  torrentFiles:=tt.Files()
+  rawFiles:=make([]manifestFile,0,len(torrentFiles))
+  hasVideo:=false
+  for _,file:=range torrentFiles{
+   path:=filepath.ToSlash(file.Path())
+   size:=file.Length()
+   rawFiles=append(rawFiles,manifestFile{Path:path,Size:size})
+   if allowedMediaPath(path) && size>0 && strings.EqualFold(filepath.Ext(path),".mp4"){hasVideo=true}
+  }
+  // Preserve the actual torrent filename even if the magnet is rejected.
+  if item.title=="" && tt.Name()!=""{
+   title,year:=identify(tt.Name())
+   if title==""{title=tt.Name()}
+   item.title=title
+   item.year=year
+   _,_=e.db.Exec("UPDATE torrents SET title=?,year=? WHERE hash=?",title,year,item.hash)
+  }
+  manifest:=buildFileManifest(rawFiles,hasVideo)
+  if err:=e.saveFileManifestLocked(item,manifest);err!=nil{
+   e.rejectTorrentLocked(item,"Unable to save torrent file list. No files were downloaded.")
+   return
   }
   if !hasVideo{
    e.rejectTorrentLocked(item,"Rejected: torrent contains no .mp4 movie. Only .mp4 and .srt files are permitted.")

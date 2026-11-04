@@ -25,6 +25,7 @@
  let inspectedFiles = $state<FileInspection|null>(null)
  let fileViewerLoading = $state(false)
  let fileViewerError = $state('')
+ let fileInspectionPolling=false
  let playerVideo = $state<HTMLVideoElement|null>(null)
  let playbackError = $state('')
  let ccEnabled = $state(false)
@@ -122,6 +123,8 @@
    fileViewerError=''
  }
  const loadFileList=async(hash:string,retry=false,quiet=false)=>{
+   if(quiet && fileInspectionPolling)return
+   if(quiet)fileInspectionPolling=true
    if(!quiet)fileViewerLoading=true
    fileViewerError=''
    try{
@@ -132,6 +135,7 @@
    }catch(e){
      if(fileViewer?.hash===hash)fileViewerError=(e as Error).message
    }finally{
+     if(quiet)fileInspectionPolling=false
      if(fileViewer?.hash===hash)fileViewerLoading=false
    }
  }

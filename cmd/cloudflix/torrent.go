@@ -17,6 +17,7 @@ import (
  "time"
 
  "github.com/anacrolix/torrent"
+ "github.com/devseckobz/cloudflix/internal/outbound"
 )
 
 type entry struct {
@@ -44,6 +45,10 @@ func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  config.Seed=false
  config.NoUpload=true
  config.NoDefaultPortForwarding=true
+ config.HTTPDialContext=outbound.DialContext
+ config.TrackerDialContext=outbound.DialContext
+ config.WebTransport=outbound.Transport()
+ config.MetainfoSourcesClient=outbound.Client()
  if raw:=os.Getenv("CLOUDFLIX_TORRENT_PORT");raw!=""{
   port,err:=strconv.Atoi(raw);if err!=nil || port<1 || port>65535{return nil,errors.New("invalid CLOUDFLIX_TORRENT_PORT")}
   config.ListenPort=port

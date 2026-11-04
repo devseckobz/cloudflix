@@ -6,7 +6,7 @@
  import {applySubtitleSelection} from './lib/subtitles.js'
  import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight, Maximize2, Clapperboard as FilmClap, MonitorPlay, RefreshCw, ArrowUpCircle, Files } from '@lucide/svelte'
 
- type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
+ type Movie = {hash:string,title:string,year:string,genre:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
  type InspectedFile = {path:string,size:number,selected:boolean}
  type FileInspection = {available:boolean,fetching?:boolean,files:InspectedFile[],total:number,truncated?:boolean,rejected:boolean,reason:string,message?:string}
  let page = $state<'home'|'downloader'|'settings'>(typeof window!=='undefined'&&window.location.pathname==='/settings'?'settings':typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
@@ -389,7 +389,7 @@
          </div>
          <h3>{movie.title}</h3>
          <div class="movie-library-meta">
-          <span>{movie.year||'Unknown year'}</span>
+          <span class="movie-library-year-genre">{movie.year||'Unknown year'}{#if movie.genre}<span class="movie-library-genre-sep"> · </span>{movie.genre}{/if}</span>
           <span class="movie-library-rating"><Star size={13} fill={movie.rating>0?'currentColor':'none'}/> {movie.rating>0?movie.rating.toFixed(1):'N/A'}</span>
          </div>
         </button>
@@ -569,7 +569,7 @@
             <p class="torrent-rejection"><AlertCircle size={14}/> {m.error||'Only MP4 movies and SRT subtitles are supported.'}</p>
            {:else}
             <div class="queue-file-info">
-             {#if m.year}<span>{m.year}</span><span class="queue-meta-sep">·</span>{/if}
+             {#if m.year}<span class="queue-year-genre">{m.year}{#if m.genre} · {m.genre}{/if}</span><span class="queue-meta-sep">·</span>{/if}
              <span>{formatBytes(m.completed)} / {formatBytes(m.size)}</span>
              {#if m.status==='completed'}<span class="queue-ready"><CheckCircle2 size={13}/> Ready to watch</span>{/if}
             </div>
@@ -672,7 +672,7 @@
     <header class="cinema-player-heading">
      <div class="player-title-group">
       <h2>{selected.title}</h2>
-      <p>{selected.year||'Movie'} {#if selected.rating>0}<span aria-hidden="true">·</span><Star size={13} fill="currentColor"/> {selected.rating.toFixed(1)} / 10{/if}</p>
+      <p><span class="cinema-movie-year-genre">{selected.year||'Movie'}{#if selected.genre} · {selected.genre}{/if}</span> {#if selected.rating>0}<span aria-hidden="true">·</span><Star size={13} fill="currentColor"/> {selected.rating.toFixed(1)} / 10{/if}</p>
      </div>
      <button class="cinema-player-close" onclick={closeMovie} aria-label="Close player" title="Close"><X size={20}/></button>
     </header>

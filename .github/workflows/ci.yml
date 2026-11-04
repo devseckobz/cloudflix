@@ -21,6 +21,8 @@ jobs:
         run: npm install --prefix frontend
       - name: Check frontend
         run: npm run check --prefix frontend
+      - name: Test PIN login UI
+        run: npm run test:login --prefix frontend
       - name: Build Svelte frontend into embedded assets
         run: npm run build --prefix frontend
       - name: Resolve Go modules

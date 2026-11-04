@@ -29,6 +29,7 @@ type entry struct {
  year string
  poster string
  backdrop string
+ rating float64
  lookedUp bool
  attempts int
  retryAt time.Time
@@ -41,7 +42,28 @@ type engine struct{
  tmdbKey string
  entries map[string]*entry
 }
+// Older Cloudflix SQLite catalogs did not store TMDB ratings.
+// Add the column in place without removing any existing movies or downloads.
+func ensureMovieRatingSchema(db *sql.DB) error {
+ rows,err:=db.Query("PRAGMA table_info(torrents)")
+ if err!=nil{return err}
+ found:=false
+ for rows.Next(){
+  var index,required,pk int
+  var name,fieldType string
+  var defaultValue sql.NullString
+  if err:=rows.Scan(&index,&name,&fieldType,&required,&defaultValue,&pk);err!=nil{rows.Close();return err}
+  if name=="rating"{found=true}
+ }
+ if err:=rows.Err();err!=nil{rows.Close();return err}
+ if err:=rows.Close();err!=nil{return err}
+ if found{return nil}
+ _,err=db.Exec("ALTER TABLE torrents ADD COLUMN rating REAL NOT NULL DEFAULT 0")
+ return err
+}
+
 func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
+ if err:=ensureMovieRatingSchema(db);err!=nil{return nil,err}
  config:=torrent.NewDefaultClientConfig()
  config.DataDir=downloads
  config.Seed=false
@@ -58,14 +80,14 @@ func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  client,err:=torrent.NewClient(config)
  if err!=nil{return nil,err}
  e:=&engine{client:client,db:db,downloads:downloads,tmdbKey:key,entries:make(map[string]*entry)}
- if key!=""{_,_=db.Exec("UPDATE torrents SET looked_up=0 WHERE poster=''")}
- rows,err:=db.Query("SELECT hash,magnet,paused,title,year,poster,backdrop,looked_up FROM torrents")
+ if key!=""{_,_=db.Exec("UPDATE torrents SET looked_up=0 WHERE (poster='' OR rating=0) AND looked_up=1")}
+ rows,err:=db.Query("SELECT hash,magnet,paused,title,year,poster,backdrop,rating,looked_up FROM torrents")
  if err!=nil{client.Close();return nil,err}
  defer rows.Close()
  for rows.Next(){
   var item entry
   var paused,lookedUp int
-  if err:=rows.Scan(&item.hash,&item.magnet,&paused,&item.title,&item.year,&item.poster,&item.backdrop,&lookedUp);err!=nil{client.Close();return nil,err}
+  if err:=rows.Scan(&item.hash,&item.magnet,&paused,&item.title,&item.year,&item.poster,&item.backdrop,&item.rating,&lookedUp);err!=nil{client.Close();return nil,err}
   tt,err:=client.AddMagnet(item.magnet)
   if err!=nil{continue}
   item.hash=tt.InfoHash().HexString()
@@ -140,7 +162,7 @@ func (e *engine) snapshot()[]map[string]any{
   if size>0{percent=100*float64(completed)/float64(size)}
   if percent>100{percent=100}
   status:="metadata"
-  if item.paused{status="paused"}else if tt.Info()!=nil{status="downloading";if size>0 && completed>=size{status="completed"}}
+  if tt.Info()!=nil && size>0 && completed>=size{status="completed"}else if item.paused{status="paused"}else if tt.Info()!=nil{status="downloading"}
   files:=make([]map[string]any,0)
   if tt.Info()!=nil{
    for _,file:=range tt.Files(){
@@ -150,7 +172,7 @@ func (e *engine) snapshot()[]map[string]any{
    }
   }
   movies=append(movies,map[string]any{
-   "hash":item.hash,"title":name,"year":item.year,"poster":item.poster,"backdrop":item.backdrop,
+   "hash":item.hash,"title":name,"year":item.year,"poster":item.poster,"backdrop":item.backdrop,"rating":item.rating,
    "size":size,"completed":completed,"progress":percent,"status":status,"files":files,
   })
  }
@@ -199,38 +221,56 @@ func (e *engine) refreshMetadata(ctx context.Context){
  e.mu.Unlock()
  for _,item:=range pending{
   select{case <-ctx.Done():return;default:}
-  title,year,poster,backdrop:=lookupMovie(ctx,key,item.title,item.year)
+  title,year,poster,backdrop,rating:=lookupMovie(ctx,key,item.title,item.year)
   if title==""{continue}
   e.mu.Lock()
   if current:=e.entries[item.hash];current!=nil{
-   current.title=title;current.year=year;current.poster=poster;current.backdrop=backdrop;current.lookedUp=true
-   _,_=e.db.Exec("UPDATE torrents SET title=?,year=?,poster=?,backdrop=?,looked_up=1 WHERE hash=?",title,year,poster,backdrop,item.hash)
+   current.title=title;current.year=year;current.poster=poster;current.backdrop=backdrop;current.rating=rating;current.lookedUp=true
+   _,_=e.db.Exec("UPDATE torrents SET title=?,year=?,poster=?,backdrop=?,rating=?,looked_up=1 WHERE hash=?",title,year,poster,backdrop,rating,item.hash)
   }
   e.mu.Unlock()
  }
 }
-func lookupMovie(ctx context.Context,key,title,year string)(string,string,string,string){
+// TMDB vote_average is a rating from 0 to 10. Zero means not yet rated.
+func parseTMDBMovie(data io.Reader, fallbackYear string)(string,string,string,string,float64,error){
+ var result struct {
+  Results []struct{
+   Title string `json:"title"`
+   ReleaseDate string `json:"release_date"`
+   PosterPath string `json:"poster_path"`
+   BackdropPath string `json:"backdrop_path"`
+   Rating float64 `json:"vote_average"`
+  } `json:"results"`
+ }
+ if err:=json.NewDecoder(io.LimitReader(data,1<<20)).Decode(&result);err!=nil{return "","","","",0,err}
+ if len(result.Results)==0{return "","","","",0,nil}
+ first:=result.Results[0]
+ year:=fallbackYear
+ if len(first.ReleaseDate)>=4{year=first.ReleaseDate[:4]}
+ rating:=first.Rating
+ if rating<0 || rating>10 || rating!=rating{rating=0}
+ return first.Title,year,first.PosterPath,first.BackdropPath,rating,nil
+}
+
+func lookupMovie(ctx context.Context,key,title,year string)(string,string,string,string,float64){
  q:=url.Values{"query":{title},"include_adult":{"false"}}
  if year!=""{q.Set("year",year)}
  endpoint:="https://api.themoviedb.org/3/search/movie?"+q.Encode()
  reqCtx,cancel:=context.WithTimeout(ctx,8*time.Second);defer cancel()
  request,err:=http.NewRequestWithContext(reqCtx,"GET",endpoint,nil)
- if err!=nil{return "","","",""}
+ if err!=nil{return "","","","",0}
  applyTMDBAuthentication(request,key)
- client:=&http.Client{Timeout:8*time.Second}
+ client:=&http.Client{
+  Timeout:8*time.Second,
+  CheckRedirect:func(_ *http.Request,_ []*http.Request)error{return http.ErrUseLastResponse},
+ }
  response,err:=client.Do(request)
- if err!=nil{return "","","",""}
+ if err!=nil{return "","","","",0}
  defer response.Body.Close()
- if response.StatusCode!=200{return "","","",""}
- // Decode TMDB's underscore-separated JSON fields using explicit field maps.
- var body struct{Results []map[string]any}
- if err:=json.NewDecoder(io.LimitReader(response.Body,1<<20)).Decode(&body);err!=nil{return "","","",""}
- if len(body.Results)==0{return "","","",""}
- first:=body.Results[0]
- get:=func(key string)string{value,_:=first[key].(string);return value}
- matched:=get("title");release:=get("release_date")
- if len(release)>=4{release=release[:4]}else{release=year}
- return matched,release,get("poster_path"),get("backdrop_path")
+ if response.StatusCode!=http.StatusOK{return "","","","",0}
+ resultTitle,resultYear,poster,backdrop,rating,err:=parseTMDBMovie(response.Body,year)
+ if err!=nil{return "","","","",0}
+ return resultTitle,resultYear,poster,backdrop,rating
 }
 func (a *application) addMagnet(w http.ResponseWriter,r *http.Request){
  var req map[string]string

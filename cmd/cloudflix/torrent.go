@@ -30,6 +30,8 @@ type entry struct {
  poster string
  backdrop string
  lookedUp bool
+ attempts int
+ retryAt time.Time
 }
 type engine struct{
  mu sync.Mutex
@@ -56,6 +58,7 @@ func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  client,err:=torrent.NewClient(config)
  if err!=nil{return nil,err}
  e:=&engine{client:client,db:db,downloads:downloads,tmdbKey:key,entries:make(map[string]*entry)}
+ if key!=""{_,_=db.Exec("UPDATE torrents SET looked_up=0 WHERE poster=''")}
  rows,err:=db.Query("SELECT hash,magnet,paused,title,year,poster,backdrop,looked_up FROM torrents")
  if err!=nil{client.Close();return nil,err}
  defer rows.Close()
@@ -178,12 +181,19 @@ func (e *engine) refreshMetadata(ctx context.Context){
  pending:=make([]candidate,0)
  e.mu.Lock()
  for _,item:=range e.entries{
-  if item.lookedUp || item.torrent.Info()==nil{continue}
+  if item.lookedUp || item.torrent.Info()==nil || time.Now().Before(item.retryAt){continue}
   title,year:=identify(item.torrent.Name())
   if title==""{continue}
-  item.title=title;item.year=year;item.lookedUp=true
-  _,_=e.db.Exec("UPDATE torrents SET title=?,year=?,looked_up=1 WHERE hash=?",title,year,item.hash)
-  if e.tmdbKey!=""{pending=append(pending,candidate{item.hash,title,year})}
+  item.title=title;item.year=year
+  _,_=e.db.Exec("UPDATE torrents SET title=?,year=? WHERE hash=?",title,year,item.hash)
+  if e.tmdbKey==""{
+   item.lookedUp=true
+  }else{
+   item.attempts++
+   item.retryAt=time.Now().Add(time.Minute)
+   if item.attempts>=5{item.lookedUp=true}
+   pending=append(pending,candidate{item.hash,title,year})
+  }
  }
  e.mu.Unlock()
  for _,item:=range pending{
@@ -192,8 +202,8 @@ func (e *engine) refreshMetadata(ctx context.Context){
   if title==""{continue}
   e.mu.Lock()
   if current:=e.entries[item.hash];current!=nil{
-   current.title=title;current.year=year;current.poster=poster;current.backdrop=backdrop
-   _,_=e.db.Exec("UPDATE torrents SET title=?,year=?,poster=?,backdrop=? WHERE hash=?",title,year,poster,backdrop,item.hash)
+   current.title=title;current.year=year;current.poster=poster;current.backdrop=backdrop;current.lookedUp=true
+   _,_=e.db.Exec("UPDATE torrents SET title=?,year=?,poster=?,backdrop=?,looked_up=1 WHERE hash=?",title,year,poster,backdrop,item.hash)
   }
   e.mu.Unlock()
  }
@@ -211,16 +221,9 @@ func lookupMovie(ctx context.Context,key,title,year string)(string,string,string
  if err!=nil{return "","","",""}
  defer response.Body.Close()
  if response.StatusCode!=200{return "","","",""}
- var result struct{Results []struct{
-  Title string
-  ReleaseDate string
-  PosterPath string
-  BackdropPath string
- }}
  // Decode TMDB's underscore-separated JSON fields using explicit field maps.
  var body struct{Results []map[string]any}
  if err:=json.NewDecoder(io.LimitReader(response.Body,1<<20)).Decode(&body);err!=nil{return "","","",""}
- _=result
  if len(body.Results)==0{return "","","",""}
  first:=body.Results[0]
  get:=func(key string)string{value,_:=first[key].(string);return value}

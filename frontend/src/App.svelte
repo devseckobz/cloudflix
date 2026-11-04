@@ -121,7 +121,7 @@
    fileViewerLoading=false
    fileViewerError=''
  }
- const showFiles=async(movie:Movie)=>{
+ const showFiles=async(movie:Pick<Movie,'hash'|'title'|'status'>)=>{
    // Fetch only on demand: large torrent file lists never bloat live updates.
    fileViewer={hash:movie.hash,title:movie.title,status:movie.status}
    inspectedFiles=null
@@ -609,7 +609,7 @@
     {#if fileViewerLoading}
      <div class="file-inspector-empty" role="status"><LoaderCircle class="spin" size={22}/><p>Inspecting torrent file list…</p></div>
     {:else if fileViewerError}
-     <div class="file-inspector-empty" role="alert"><AlertCircle size={23}/><p>{fileViewerError}</p><button type="button" onclick={()=>fileViewer&&showFiles({hash:fileViewer.hash,title:fileViewer.title,status:fileViewer.status} as Movie)}>Retry</button></div>
+     <div class="file-inspector-empty" role="alert"><AlertCircle size={23}/><p>{fileViewerError}</p><button type="button" onclick={()=>{if(fileViewer)void showFiles(fileViewer)}}>Retry</button></div>
     {:else if inspectedFiles?.available}
      <div class="file-inspector-summary">
       <span>{inspectedFiles.total} {inspectedFiles.total===1?'file':'files'} found</span>

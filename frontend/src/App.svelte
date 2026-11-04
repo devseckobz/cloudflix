@@ -5,7 +5,7 @@
  type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,size:number,completed:number,progress:number,status:string,files:{path:string,size:number}[]}
  let page = $state<'home'|'downloader'>(typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
  let auth = $state<'loading'|'setup'|'login'|'ready'>('loading')
- let password = $state('')
+ let pin = $state('')
  let movies = $state<Movie[]>([])
  let error = $state('')
  let notice = $state('')
@@ -65,11 +65,11 @@
  })
  const authenticate=async()=>{
    error=''
-   if(auth==='setup'&&password.length<12){error='Choose a password of at least 12 characters';return}
+   if(!/^[0-9]{6}$/.test(pin)){error='Enter your six-digit access PIN';return}
    submitting=true
    try{
-     await call(auth==='setup'?'auth/setup':'auth/login','POST',{password})
-     password='';auth='ready';await refresh();connect()
+     await call('auth/login','POST',{pin})
+     pin='';auth='ready';await refresh();connect()
    }catch(e){error=(e as Error).message}
    finally{submitting=false}
  }
@@ -96,19 +96,30 @@
 
 {#if auth==='loading'}
  <div class="auth-screen"><div class="brand mark"><Film size={42}/><strong>cloud<span>flix</span></strong></div><span class="muted">Connecting to your server...</span></div>
-{:else if auth==='login'||auth==='setup'}
+{:else if auth==='setup'}
+ <div class="auth-screen">
+  <div class="auth-glow"></div>
+  <div class="auth-card">
+   <div class="brand"><span class="brand-icon"><Film size={28}/></span><strong>cloud<span>flix</span></strong></div>
+   <div class="auth-shield"><Shield size={28}/></div>
+   <h1>Set up your PIN</h1>
+   <p>Access is configured from the VPS terminal, not in the browser. Run the Cloudflix PIN helper as your server administrator, then reload this page.</p>
+   <p><code>wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/pin.sh | sudo bash</code></p>
+  </div>
+ </div>
+{:else if auth==='login'}
  <div class="auth-screen">
   <div class="auth-glow"></div>
   <form class="auth-card" onsubmit={(e)=>{e.preventDefault();authenticate()}}>
    <div class="brand"><span class="brand-icon"><Film size={28}/></span><strong>cloud<span>flix</span></strong></div>
    <div class="auth-shield"><Shield size={28}/></div>
-   <h1>{auth==='setup'?'Welcome to Cloudflix':'Welcome back'}</h1>
-   <p>{auth==='setup'?'Create your administrator password to secure your personal movie library.':'Log in to access your private movie library.'}</p>
-   <label for="password">Administrator password</label>
-   <input id="password" type="password" minlength={auth==='setup'?12:1} required autocomplete={auth==='setup'?'new-password':'current-password'} bind:value={password} placeholder={auth==='setup'?'At least 12 characters':'Enter password'}/>
+   <h1>Welcome back</h1>
+   <p>Enter the six-digit access PIN configured on your VPS.</p>
+   <label for="pin">Access PIN</label>
+   <input id="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required autocomplete="off" bind:value={pin} placeholder="••••••" class="pin-field"/>
    {#if error}<div class="alert"><AlertCircle size={16}/>{error}</div>{/if}
-   <button class="primary wide" disabled={submitting} type="submit">{auth==='setup'?'Create administrator':'Log in'} <span>→</span></button>
-   <small>Your media, credentials and download history stay on your own server.</small>
+   <button class="primary wide" disabled={submitting||pin.length!==6} type="submit">Unlock Cloudflix <span>→</span></button>
+   <small>Five incorrect attempts lock PIN login for 15 minutes.</small>
   </form>
  </div>
 {:else}

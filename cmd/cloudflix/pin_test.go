@@ -2,6 +2,7 @@ package main
 
 import (
  "database/sql"
+ "net/http"
  "net/http/httptest"
  "path/filepath"
  "strings"
@@ -71,4 +72,27 @@ func TestPINLogin(t *testing.T){
   a.login(rr,req)
   if rr.Code!=tc.status{t.Errorf("%s got %d expected %d (%s)",tc.body,rr.Code,tc.status,rr.Body.String())}
  }
+}
+
+func TestPINLoginOverPort80SetsValidSession(t *testing.T){
+ db:=testPINDB(t)
+ if err:=ensurePINSchema(db);err!=nil{t.Fatal(err)}
+ hash,err:=argon2id.CreateHash("005501",argon2id.DefaultParams)
+ if err!=nil{t.Fatal(err)}
+ if _,err:=db.Exec("INSERT INTO users(id,password_hash,pin_enabled) VALUES (1,?,1)",hash);err!=nil{t.Fatal(err)}
+ a:=&application{db:db,attempts:map[string][]time.Time{}}
+ handler:=securityHeaders(http.HandlerFunc(a.login))
+ req:=httptest.NewRequest(http.MethodPost,"http://127.0.0.1:80/api/auth/login",strings.NewReader(`{"pin":"005501"}`))
+ req.Header.Set("Origin","http://127.0.0.1")
+ req.Header.Set("Content-Type","application/json")
+ resp:=httptest.NewRecorder()
+ handler.ServeHTTP(resp,req)
+ if resp.Code!=200{t.Fatalf("PIN login failed with HTTP %d: %s",resp.Code,resp.Body.String())}
+ cookies:=resp.Result().Cookies()
+ if len(cookies)!=1 || cookies[0].Name!="cloudflix_session" || !cookies[0].HttpOnly {
+  t.Fatalf("login did not set a secure session cookie: %+v",cookies)
+ }
+ statusReq:=httptest.NewRequest("GET","http://127.0.0.1/api/auth/status",nil)
+ statusReq.AddCookie(cookies[0])
+ if !a.authenticated(statusReq){t.Fatal("session created by PIN login is not recognized")}
 }

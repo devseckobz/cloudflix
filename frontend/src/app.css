@@ -566,3 +566,17 @@ html{color-scheme:dark;scrollbar-color:#3d4c60 #0b1119;scrollbar-width:thin}
 }
 .movie-library-meta{gap:9px;min-width:0}
 .movie-library-rating{flex:0 0 auto}
+
+
+/* MKV playback preparation uses a quiet, useful status in the theater. */
+.cinema-player-preparing{
+ min-height:min(55vh,500px);
+ display:flex;align-items:center;justify-content:center;flex-direction:column;
+ gap:13px;padding:40px 22px;background:#070c12;text-align:center;color:#e46a61;
+}
+.cinema-player-preparing h3{color:#edf2f7;font-size:16px;margin:4px 0 0;font-weight:700}
+.cinema-player-preparing p{color:#a5b4c4;font-size:13px;line-height:1.65;max-width:460px;margin:0}
+.cinema-player-preparing span{color:#778ba2;font-size:11px;line-height:1.5}
+.cinema-player-preparing button{border:1px solid #415569;background:#243548;color:#f4f8fd;border-radius:7px;padding:10px 17px;font-size:12px;margin-top:4px}
+.cinema-player-preparing button:hover{background:#304559}
+@media(max-width:720px){.cinema-player-preparing{min-height:290px;padding:30px 18px}}

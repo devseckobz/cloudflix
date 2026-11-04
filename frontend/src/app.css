@@ -56,3 +56,50 @@
 .auth-compact .auth-wordmark{margin-bottom:38px}
 .auth-compact label{margin-bottom:11px}
 @media(max-width:480px){.auth-card.auth-compact{padding:30px 22px 25px}}
+
+/* Home: a clean, searchable completed-movie library. No hero or dashboard metrics. */
+.library-page{max-width:1480px;width:100%;margin:0 auto;padding-top:35px}
+.library-toolbar{display:flex;align-items:center;justify-content:space-between;gap:22px;margin-bottom:30px}
+.library-heading h1{margin:0 0 7px;color:#f4f7fc;font-size:25px;font-weight:800;letter-spacing:-.8px}
+.library-heading p{color:#8291a5;font-size:12px;margin:0}
+.library-search{min-width:min(100%,300px);background:#121b28}
+.library-search input{width:100%;min-width:0}
+.library-grid{grid-template-columns:repeat(5,minmax(0,1fr));gap:28px 20px}
+.library-grid .movie-card{width:100%;min-width:0}
+.library-grid .poster{border-radius:11px}
+.library-grid .movie-card h3{font-size:14px;font-weight:700;line-height:1.4;margin:12px 0 8px}
+.movie-details{display:flex;justify-content:space-between;align-items:center;gap:6px;color:#91a0b1;font-size:12px;min-height:20px}
+.movie-details .movie-rating{display:inline-flex;align-items:center;gap:5px;color:#edbd72;font-weight:750;font-size:12px;font-variant-numeric:tabular-nums}
+.library-pagination{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-top:36px;flex-wrap:wrap}
+.pagination-summary{font-size:12px;color:#8090a5}
+.pagination-buttons{display:flex;align-items:center;gap:7px}
+.pagination-buttons button{width:34px;height:34px;display:inline-grid;place-items:center;background:#172131;border:1px solid #2c394c;border-radius:8px;color:#adbbce;font-size:12px;font-weight:700;transition:background .15s,border-color .15s}
+.pagination-buttons button:hover:not(:disabled){background:#29374a;border-color:#52657f;color:#fff}
+.pagination-buttons button.current{background:#492b36;border-color:#ed5b58;color:#ff7771}
+.pagination-buttons button:disabled{opacity:.35;cursor:not-allowed}
+.library-empty{padding:75px 18px}
+.downloader-stats{margin:12px 0 30px}
+.tmdb-required{display:flex;align-items:center;gap:14px;padding:17px 20px;margin:0 0 25px;background:#362b20;border:1px solid #685037;border-radius:11px;color:#ffd19b}
+.tmdb-required>svg{flex-shrink:0}
+.tmdb-required>div{flex:1}
+.tmdb-required strong{font-size:13px}
+.tmdb-required p{color:#e5c3a0;font-size:12px;margin:5px 0 0;line-height:1.6}
+.tmdb-required button{display:inline-flex;align-items:center;gap:7px;background:#f0524d;color:#fff;padding:10px 13px;border:0;border-radius:8px;font-weight:750;font-size:12px;white-space:nowrap}
+.tmdb-required button:hover{background:#fe6963}
+.mobile-download-count{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:1px 4px;border-radius:6px;background:#632c34;color:#ffbbb6;font-size:10px;font-weight:800}
+@media(min-width:1680px){.library-grid{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@media(max-width:1220px){.library-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:920px){.library-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:22px 15px}}
+@media(max-width:720px){
+ .library-page{padding-top:22px}
+ .library-toolbar{align-items:stretch;flex-direction:column;gap:19px}
+ .library-heading h1{font-size:22px}
+ .library-search{width:100%}
+ .library-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 13px}
+ .library-pagination{flex-direction:column-reverse;align-items:center;margin-top:29px}
+ .pagination-buttons button{width:38px;height:38px}
+ .tmdb-required{align-items:flex-start;flex-wrap:wrap;gap:10px;padding:15px}
+ .tmdb-required>div{flex-basis:calc(100% - 40px)}
+ .tmdb-required button{width:100%;justify-content:center}
+ .downloader-stats{margin:0 0 24px}
+}

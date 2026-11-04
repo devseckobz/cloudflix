@@ -10,7 +10,7 @@ func TestMovieGenreMapping(t *testing.T){
   {[]int{27,53},"Horror"},
   {[]int{28,12},"Action"},
   {[]int{35,10749},"Comedy"},
-  {[]int{878,28},"Sci-Fi"},
+  {[]int{878,28},"Science Fiction"},
   {[]int{99},"Documentary"},
   {[]int{999999,18},"Drama"},
   {[]int{999999},""},

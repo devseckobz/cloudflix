@@ -1,9 +1,9 @@
 <script lang="ts">
  import { onMount } from 'svelte'
- import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink } from '@lucide/svelte'
+ import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink } from '@lucide/svelte'
 
  type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,size:number,completed:number,progress:number,status:string,files:{path:string,size:number}[]}
- let page = $state<'home'|'downloader'>(typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
+ let page = $state<'home'|'downloader'|'settings'>(typeof window!=='undefined'&&window.location.pathname==='/settings'?'settings':typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
  let auth = $state<'loading'|'setup'|'login'|'ready'>('loading')
  let pin = $state('')
  let movies = $state<Movie[]>([])
@@ -17,9 +17,14 @@
  let connected = $state(false)
  let version = $state('v0.1.0-alpha')
  let live:EventSource|null = null
- const navigate=(destination:'home'|'downloader')=>{
+ let tmdbConfigured = $state(false)
+ let tmdbToken = $state('')
+ let settingsBusy = $state(false)
+ let settingsLoading = $state(false)
+ const navigate=(destination:'home'|'downloader'|'settings')=>{
+   if(destination==='settings')void loadSettings()
    page=destination
-   const path=destination==='home'?'/':'/downloader'
+   const path=destination==='home'?'/':destination==='settings'?'/settings':'/downloader'
    if(window.location.pathname!==path)window.history.pushState({},'',path)
  }
  const formatBytes=(v:number):string=>{
@@ -41,6 +46,36 @@
    if(!response.ok) throw new Error(result.error||'Request failed')
    return result
  }
+ const loadSettings=async()=>{
+   settingsLoading=true
+   try{
+     const result=await call('settings')
+     tmdbConfigured=Boolean(result.tmdbConfigured)
+   }catch(e){error=(e as Error).message}
+   finally{settingsLoading=false}
+ }
+ const saveTMDB=async()=>{
+   if(!tmdbToken.trim()){error='Paste a TMDB API Read Access Token first';return}
+   settingsBusy=true;error='';notice=''
+   try{
+     const result=await call('settings','PUT',{tmdbApiKey:tmdbToken.trim()})
+     tmdbConfigured=Boolean(result.tmdbConfigured)
+     tmdbToken=''
+     notice='TMDB API token verified and saved. Movie artwork will refresh automatically.'
+   }catch(e){error=(e as Error).message}
+   finally{settingsBusy=false}
+ }
+ const clearTMDB=async()=>{
+   if(!confirm('Remove the TMDB API token? Existing artwork will remain, but new movie metadata will not be fetched.'))return
+   settingsBusy=true;error='';notice=''
+   try{
+     await call('settings','PUT',{tmdbApiKey:''})
+     tmdbConfigured=false
+     tmdbToken=''
+     notice='TMDB API token removed.'
+   }catch(e){error=(e as Error).message}
+   finally{settingsBusy=false}
+ }
  const setState=(state:{movies:Movie[],version?:string})=>{movies=state.movies||[];if(state.version)version=state.version;if(selected)selected=movies.find(m=>m.hash===selected?.hash)||null}
  const connect=()=>{
    live?.close()
@@ -54,11 +89,11 @@
    try{
      const state=await call('auth/status')
      auth=state.setupRequired?'setup':state.authenticated?'ready':'login'
-     if(auth==='ready'){await refresh();connect()}
+     if(auth==='ready'){await refresh();connect();if(page==='settings')await loadSettings()}
    }catch{error='Unable to connect to Cloudflix server';auth='login'}
  }
  onMount(()=>{
-   const handleBack=()=>{page=window.location.pathname==='/downloader'?'downloader':'home'}
+   const handleBack=()=>{page=window.location.pathname==='/settings'?'settings':window.location.pathname==='/downloader'?'downloader':'home';if(page==='settings')void loadSettings()}
    window.addEventListener('popstate',handleBack)
    checkAuth()
    return ()=>{live?.close();window.removeEventListener('popstate',handleBack)}
@@ -91,7 +126,7 @@
 </script>
 
 <svelte:head>
- <title>{page==='home'?'Home':'Downloader'} · Cloudflix</title>
+ <title>{page==='home'?'Home':page==='settings'?'Settings':'Downloader'} · Cloudflix</title>
 </svelte:head>
 
 {#if auth==='loading'}
@@ -130,6 +165,7 @@
    <nav aria-label="Main navigation">
     <button class:active={page==='home'} onclick={()=>navigate('home')}><House size={19}/> Home</button>
     <button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={19}/> Downloader {#if active}<span class="nav-count">{active}</span>{/if}</button>
+    <button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={19}/> Settings</button>
    </nav>
    <div class="side-label library-label">YOUR LIBRARY</div>
    <nav>
@@ -145,7 +181,7 @@
   <main class="main">
    <header class="topbar">
     <div class="mobile-brand brand"><span class="brand-icon"><Film size={19}/></span><strong>cloud<span>flix</span></strong></div>
-    <div class="top-caption">{page==='home'?'Your personal cinema':'Manage your downloads'}</div>
+    <div class="top-caption">{page==='home'?'Your personal cinema':page==='settings'?'Configure Cloudflix':'Manage your downloads'}</div>
     <div class="top-right"><span class="version">{version}</span><div class="avatar">C</div></div>
    </header>
    {#if notice}<div class="toast success"><CheckCircle2 size={16}/>{notice}<button onclick={()=>notice=''} aria-label="Dismiss"><X size={16}/></button></div>{/if}
@@ -178,6 +214,47 @@
       <div class="empty"><div class="empty-icon"><Film size={34}/></div><h3>{movies.length?'No matching movies':'Your collection starts here'}</h3><p>{movies.length?'Try a different search or filter.':'Movies you download will appear here with posters and artwork.'}</p><button class="primary" onclick={()=>{navigate('downloader');filter='all'}}><Plus size={17}/> Open downloader</button></div>
      {/if}
     </div>
+   {:else if page==='settings'}
+    <div class="dashboard-content settings-page">
+     <div class="page-title">
+      <div class="eyebrow"><span class="red-dot"></span> CLOUDFlIX CONFIGURATION</div>
+      <h1>Settings</h1>
+      <p>Manage integrations and your server preferences.</p>
+     </div>
+     <section class="settings-panel">
+      <div class="settings-panel-header">
+       <div class="settings-panel-icon"><Film size={23}/></div>
+       <div class="settings-panel-intro">
+        <h2>TMDB Movie Metadata</h2>
+        <p>Automatically find movie titles, posters, background artwork, and release years.</p>
+       </div>
+       <span class:configured={tmdbConfigured} class="integration-status">{settingsLoading?'Checking...':tmdbConfigured?'● Connected':'○ Not configured'}</span>
+      </div>
+      <form class="settings-form" onsubmit={(event)=>{event.preventDefault();saveTMDB()}}>
+       <label for="tmdb-token">TMDB API Read Access Token</label>
+       <input id="tmdb-token" type="password" bind:value={tmdbToken} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="2048" placeholder={tmdbConfigured?'Enter a new token to replace the saved one':'Paste your TMDB API Read Access Token'} />
+       <p class="settings-hint">Your token is checked directly with TMDB and stored privately on this VPS. For security, the saved token is never displayed.</p>
+       <div class="settings-actions">
+        <button type="submit" class="primary" disabled={settingsBusy||!tmdbToken.trim()}>{#if settingsBusy}<LoaderCircle size={17}/>{:else}<CheckCircle2 size={17}/>{/if} Save & verify token</button>
+        {#if tmdbConfigured}<button type="button" class="settings-remove" disabled={settingsBusy} onclick={clearTMDB}><Trash2 size={17}/> Remove token</button>{/if}
+       </div>
+       <p class="settings-help">Get your token from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">TMDB account settings</a>. Use the <strong>API Read Access Token</strong>, not the API key.</p>
+      </form>
+     </section>
+     <section class="settings-panel">
+      <div class="settings-panel-header">
+       <div class="settings-panel-icon"><HardDrive size={23}/></div>
+       <div class="settings-panel-intro">
+        <h2>Server Access</h2>
+        <p>Access Cloudflix using your VPS IP address and port 3000.</p>
+       </div>
+      </div>
+      <div class="settings-info">
+       <span>Current server</span><strong>{typeof window!=='undefined'?window.location.host:'VPS_IP:3000'}</strong>
+      </div>
+      <p class="settings-warning"><AlertCircle size={16}/> Direct HTTP access is unencrypted. On an untrusted network your PIN, session cookies, and any TMDB token submitted here may be intercepted. Restrict port 3000 to trusted IP addresses where possible.</p>
+     </section>
+    </div>
    {:else}
     <div class="dashboard-content download-page">
      <div class="page-title"><div><div class="eyebrow"><span class="red-dot"></span> DOWNLOAD MANAGER</div><h1>Downloader</h1><p>Add magnet links and manage your downloads from anywhere.</p></div></div>
@@ -202,7 +279,7 @@
    {/if}
    <footer class="footer"><span>© Cloudflix · Self-hosted with ❤️</span><span>Go + Svelte · Movie data from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer">TMDB</a>; not endorsed or certified by TMDB.</span></footer>
   </main>
-  <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>navigate('home')}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={20}/> Downloader</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
+  <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>navigate('home')}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={20}/> Downloader</button><button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={20}/> Settings</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
  </div>
  {#if selected}
   <div class="modal-backdrop" role="presentation" onclick={(event)=>{if(event.target===event.currentTarget)selected=null}}>

@@ -108,6 +108,8 @@ func (e *engine) startWhenReady(item *entry){
   if item.paused {item.torrent.DisallowDataDownload()}
  }()
 }
+var errTMDBRequired=errors.New("TMDB API key is required. Open Settings to configure your TMDB API key before downloading.")
+
 func (e *engine) add(magnet string)(string,error){
  if len(magnet)>8192 || len(magnet)<20 || !strings.HasPrefix(magnet,"magnet:?"){return "",errors.New("invalid magnet URI")}
  parsed,err:=url.Parse(magnet)
@@ -117,6 +119,7 @@ func (e *engine) add(magnet string)(string,error){
  if !validXT{return "",errors.New("missing BitTorrent infohash")}
  e.mu.Lock()
  defer e.mu.Unlock()
+ if strings.TrimSpace(e.tmdbKey)==""{return "",errTMDBRequired}
  if len(e.entries)>=100{return "",errors.New("torrent limit reached (100)")}
  tt,err:=e.client.AddMagnet(magnet)
  if err!=nil{return "",errors.New("invalid or unsupported magnet")}
@@ -276,7 +279,8 @@ func (a *application) addMagnet(w http.ResponseWriter,r *http.Request){
  var req map[string]string
  if !readJSON(w,r,&req){return}
  hash,err:=a.engine.add(req["magnet"])
- if err!=nil{fail(w,400,err.Error());return}
+ if errors.Is(err,errTMDBRequired){fail(w,http.StatusPreconditionRequired,err.Error());return}
+ if err!=nil{fail(w,http.StatusBadRequest,err.Error());return}
  respond(w,201,map[string]string{"hash":hash})
 }
 func (a *application) torrentAction(w http.ResponseWriter,r *http.Request){

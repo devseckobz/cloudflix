@@ -18,7 +18,7 @@ test('movie click opens integrated MP4 theater with fullscreen and captions',()=
 
 test('download manager displays rejected non-video torrents',()=>{
  assert.match(component,/m\.status==='rejected'/)
- assert.match(component,/torrent contains no \.mp4|Only MP4 movies and SRT subtitles/)
+ assert.match(component,/torrent contains no \.mp4|Only MP4\/MKV movies and SRT subtitles/)
  assert.match(component,/m\.error/)
 })
 

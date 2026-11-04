@@ -321,34 +321,34 @@ html{color-scheme:dark;scrollbar-color:#3d4c60 #0b1119;scrollbar-width:thin}
 }
 
 
-/* Page navigation sits in the app header; results count is centered below posters. */
-.top-library-pagination{display:flex;align-items:center;gap:6px;min-width:0;max-width:55%;overflow-x:auto;scrollbar-width:none}
-.top-library-pagination::-webkit-scrollbar{display:none}
-.top-library-pagination button{
+/* Center movie pagination above the results count, below the poster grid. */
+.library-pagination-footer{
+ display:flex;flex-direction:column;align-items:center;gap:11px;
+ margin:32px auto 0;padding:0;border:0;
+}
+.library-bottom-pagination{
+ display:flex;align-items:center;justify-content:center;gap:7px;
+ max-width:100%;overflow-x:auto;scrollbar-width:none;
+}
+.library-bottom-pagination::-webkit-scrollbar{display:none}
+.library-bottom-pagination button{
  display:inline-flex;align-items:center;justify-content:center;
- flex:0 0 31px;width:31px;height:31px;background:#16202d;
- border:1px solid #304153;border-radius:6px;color:#98aabd;
+ flex:0 0 34px;width:34px;height:34px;background:#16202d;
+ border:1px solid #304153;border-radius:7px;color:#98aabd;
  font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;
  transition:background .15s,border-color .15s,color .15s;
 }
-.top-library-pagination button.active{background:#ee5754;border-color:#ee5754;color:#fff}
-.top-library-pagination button:hover:not(:disabled){background:#29394c;border-color:#687d95;color:#fff}
-.top-library-pagination button:disabled{opacity:.35;cursor:not-allowed}
-.top-library-pagination button:focus-visible{outline:2px solid #9dbfe6;outline-offset:2px}
+.library-bottom-pagination button.active{background:#ee5754;border-color:#ee5754;color:#fff}
+.library-bottom-pagination button:hover:not(:disabled){background:#29394c;border-color:#687d95;color:#fff}
+.library-bottom-pagination button:disabled{opacity:.35;cursor:not-allowed}
+.library-bottom-pagination button:focus-visible{outline:2px solid #9dbfe6;outline-offset:2px}
 .library-results-count{
  color:#8292a6;font-size:12px;letter-spacing:0;text-align:center;
- padding:0;margin:34px 0 0;border:0;font-variant-numeric:tabular-nums;
+ padding:0;margin:0;border:0;font-variant-numeric:tabular-nums;
 }
 @media(max-width:720px){
- .topbar:has(.top-library-pagination){height:auto;min-height:94px;flex-wrap:wrap;align-content:center;row-gap:9px;padding-top:8px;padding-bottom:8px}
- .top-library-pagination{max-width:calc(100% - 135px);margin-left:auto;gap:4px}
- .top-library-pagination button{width:29px;height:29px;flex-basis:29px}
- .topbar:has(.top-library-pagination) .nav-movie-search{order:3;flex:1 0 100%;max-width:none;width:100%;margin-left:0;height:35px}
- .library-results-count{margin-top:29px}
-}
-@media(min-width:721px) and (max-width:1000px){
- .top-library-pagination{gap:4px}
- .top-library-pagination button{width:28px;height:28px;flex-basis:28px}
+ .library-pagination-footer{margin-top:27px;gap:10px}
+ .library-bottom-pagination button{width:36px;height:36px;flex-basis:36px}
 }
 
 /* Downloader: compact, functional rows rather than dashboard-like cards. */

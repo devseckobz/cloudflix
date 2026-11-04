@@ -63,7 +63,10 @@ func main() {
  }
  for _,statement:=range statements {if _,err=db.Exec(statement);err!=nil{log.Fatal(err)}}
  if err:=ensurePINSchema(db);err!=nil{log.Fatal(err)}
- a:=&application{db:db,dataDir:dataDir,tmdbKey:os.Getenv("TMDB_API_KEY"),attempts:make(map[string][]time.Time)}
+ if err:=ensureSettingsSchema(db);err!=nil{log.Fatal(err)}
+ tmdbKey,err:=loadTMDBKey(db,os.Getenv("TMDB_API_KEY"))
+ if err!=nil{log.Fatal(err)}
+ a:=&application{db:db,dataDir:dataDir,tmdbKey:tmdbKey,attempts:make(map[string][]time.Time)}
  a.engine,err=newEngine(downloads,db,a.tmdbKey)
  if err!=nil{log.Fatal(err)}
  defer a.engine.close()
@@ -75,12 +78,14 @@ func main() {
  mux.HandleFunc("POST /api/auth/login",a.login)
  mux.HandleFunc("POST /api/auth/logout",a.require(a.logout))
  mux.HandleFunc("GET /api/state",a.require(a.state))
+ mux.HandleFunc("GET /api/settings",a.require(a.getSettings))
+ mux.HandleFunc("PUT /api/settings",a.require(a.saveSettings))
  mux.HandleFunc("GET /api/events",a.require(a.events))
  mux.HandleFunc("POST /api/magnets",a.require(a.addMagnet))
  mux.HandleFunc("POST /api/torrents/{hash}/{action}",a.require(a.torrentAction))
  mux.HandleFunc("GET /api/files/{hash}",a.require(a.downloadFile))
  mux.Handle("/",static.Handler())
- addr:=env("CLOUDFLIX_LISTEN","127.0.0.1:3000")
+ addr:=env("CLOUDFLIX_LISTEN","0.0.0.0:3000")
  server:=&http.Server{Addr:addr,Handler:securityHeaders(mux),ReadHeaderTimeout:5*time.Second,IdleTimeout:60*time.Second,ReadTimeout:20*time.Second,MaxHeaderBytes:1<<20}
  log.Printf("Cloudflix %s listening on %s",version,addr)
  if err:=server.ListenAndServe();err!=nil && !errors.Is(err,http.ErrServerClosed){log.Fatal(err)}
@@ -94,7 +99,7 @@ func securityHeaders(next http.Handler)http.Handler{
   w.Header().Set("Referrer-Policy","no-referrer")
   w.Header().Set("X-Frame-Options","DENY")
   w.Header().Set("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://image.tmdb.org data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
-  if r.Method=="POST" {
+  if r.Method=="POST" || r.Method=="PUT" || r.Method=="PATCH" || r.Method=="DELETE" {
    if !strings.HasPrefix(r.Header.Get("Content-Type"),"application/json"){http.Error(w,"expected application/json",415);return}
    if origin:=r.Header.Get("Origin");origin!=""{
     parsed,err:=url.Parse(origin)

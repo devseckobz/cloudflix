@@ -11,6 +11,7 @@ import (
  "os"
  "path/filepath"
  "regexp"
+ "sort"
  "strconv"
  "strings"
  "sync"
@@ -22,6 +23,7 @@ import (
 
 type entry struct {
  hash string
+ queuePosition int64
  magnet string
  torrent *torrent.Torrent
  paused bool
@@ -165,13 +167,13 @@ func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  if err!=nil{return nil,err}
  e:=&engine{client:client,db:db,downloads:downloads,tmdbKey:key,entries:make(map[string]*entry)}
  if key!=""{_,_=db.Exec("UPDATE torrents SET looked_up=0 WHERE (poster='' OR rating=0) AND looked_up=1")}
- rows,err:=db.Query("SELECT hash,magnet,paused,title,year,poster,backdrop,rating,looked_up,rejection_reason FROM torrents")
+ rows,err:=db.Query("SELECT rowid,hash,magnet,paused,title,year,poster,backdrop,rating,looked_up,rejection_reason FROM torrents ORDER BY rowid ASC")
  if err!=nil{client.Close();return nil,err}
  defer rows.Close()
  for rows.Next(){
   var item entry
   var paused,lookedUp int
-  if err:=rows.Scan(&item.hash,&item.magnet,&paused,&item.title,&item.year,&item.poster,&item.backdrop,&item.rating,&lookedUp,&item.rejectionReason);err!=nil{client.Close();return nil,err}
+  if err:=rows.Scan(&item.queuePosition,&item.hash,&item.magnet,&paused,&item.title,&item.year,&item.poster,&item.backdrop,&item.rating,&lookedUp,&item.rejectionReason);err!=nil{client.Close();return nil,err}
   item.paused=paused!=0;item.lookedUp=lookedUp!=0
   if item.rejectionReason!="" {
    e.entries[item.hash]=&item
@@ -267,8 +269,14 @@ func (e *engine) add(magnet string)(string,error){
  // A duplicate request must not pause the already validated torrent.
  if _,exists:=e.entries[hash];exists{return hash,nil}
  tt.DisallowDataDownload()
- if _,err=e.db.Exec("INSERT INTO torrents(hash,magnet) VALUES(?,?)",hash,magnet);err!=nil{tt.Drop();return "",err}
- item:=&entry{hash:hash,magnet:magnet,torrent:tt}
+ result,err:=e.db.Exec("INSERT INTO torrents(hash,magnet) VALUES(?,?)",hash,magnet)
+ if err!=nil{tt.Drop();return "",err}
+ queuePosition,err:=result.LastInsertId()
+ if err!=nil{
+  // SQLite reports a rowid for every newly inserted torrent.
+  _=e.db.QueryRow("SELECT rowid FROM torrents WHERE hash=?",hash).Scan(&queuePosition)
+ }
+ item:=&entry{hash:hash,magnet:magnet,torrent:tt,queuePosition:queuePosition}
  e.entries[hash]=item
  e.startWhenReady(item)
  return hash,nil
@@ -295,10 +303,27 @@ func (e *engine) action(hash,action string)error{
  }
  return nil
 }
+// orderedEntries uses the persisted SQLite insertion rowid, not the random
+// iteration order of Go maps. Ties fall back to the stable infohash.
+func orderedEntries(entries map[string]*entry)[]*entry{
+ items:=make([]*entry,0,len(entries))
+ for _,item:=range entries{items=append(items,item)}
+ sort.Slice(items,func(i,j int)bool{
+  a,b:=items[i],items[j]
+  if a.queuePosition!=b.queuePosition{
+   if a.queuePosition==0{return false}
+   if b.queuePosition==0{return true}
+   return a.queuePosition<b.queuePosition
+  }
+  return a.hash<b.hash
+ })
+ return items
+}
+
 func (e *engine) snapshot()[]map[string]any{
  e.mu.Lock();defer e.mu.Unlock()
  movies:=make([]map[string]any,0,len(e.entries))
- for _,item:=range e.entries{
+ for _,item:=range orderedEntries(e.entries){
   name:=item.title
   if name==""{name="Fetching movie metadata..."}
   status:="metadata"

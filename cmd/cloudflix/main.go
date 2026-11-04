@@ -80,6 +80,8 @@ func main() {
  mux.HandleFunc("GET /api/state",a.require(a.state))
  mux.HandleFunc("GET /api/settings",a.require(a.getSettings))
  mux.HandleFunc("PUT /api/settings",a.require(a.saveSettings))
+ mux.HandleFunc("GET /api/updates",a.require(a.updateInfo))
+ mux.HandleFunc("POST /api/updates",a.require(a.requestUpdate))
  mux.HandleFunc("GET /api/events",a.require(a.events))
  mux.HandleFunc("POST /api/magnets",a.require(a.addMagnet))
  mux.HandleFunc("POST /api/torrents/{hash}/{action}",a.require(a.torrentAction))

@@ -343,7 +343,7 @@
      }
      await call('magnets','POST',{magnet:magnet.trim()})
      magnet=''
-     notify('Magnet queued. Checking its files for an MP4 movie before downloading.')
+     notify('Magnet queued. Checking its files for an MP4 or MKV movie before downloading.')
      await refresh()
    }catch(e){
      error=(e as Error).message
@@ -591,7 +591,7 @@
       <form class="magnet-form downloader-magnet-form" onsubmit={(e)=>{e.preventDefault();void add()}}>
        <div class="magnet-panel-heading">
         <div><h2>Add a download</h2><p>Paste a magnet link to add a movie to your queue.</p></div>
-        <span class="magnet-media-hint">MP4 + SRT only</span>
+        <span class="magnet-media-hint">MP4 · MKV · SRT</span>
        </div>
        <label for="magnet">MAGNET LINK</label>
        <div class="magnet-entry-row">
@@ -629,7 +629,7 @@
             <span class="status-pill" class:complete={m.status==='completed'} class:rejected={m.status==='rejected'}>{m.status==='metadata'?'Checking files':m.status==='completed'?'Completed':m.status}</span>
            </div>
            {#if m.status==='rejected'}
-            <p class="torrent-rejection"><AlertCircle size={14}/> {m.error||'Only MP4 movies and SRT subtitles are supported.'}</p>
+            <p class="torrent-rejection"><AlertCircle size={14}/> {m.error||'Only MP4/MKV movies and SRT subtitles are supported.'}</p>
            {:else}
             <div class="queue-file-info">
              {#if m.year}<span class="movie-library-tags"><span class="movie-year-badge">{m.year}</span>{#if m.genre}<span class="movie-genre-badge">{m.genre}</span>{/if}</span>{/if}
@@ -703,7 +703,7 @@
     {:else if inspectedFiles?.available}
      <div class="file-inspector-summary">
       <span>{inspectedFiles.total} {inspectedFiles.total===1?'file':'files'} found</span>
-      <span>{inspectedFiles.rejected?'No files downloaded':'Only MP4 and SRT files are selected for download'}</span>
+      <span>{inspectedFiles.rejected?'No files downloaded':'Only MP4, MKV and SRT files are selected for download'}</span>
      </div>
      <div class="file-inspector-list" role="list">
       {#each inspectedFiles.files as file,i (i)}
@@ -820,7 +820,7 @@
      <div class="cinema-player-unavailable">
       <MonitorPlay size={40} strokeWidth={1.2}/>
       <h3>{selected.status==='rejected'?'Torrent was rejected':'Movie not ready yet'}</h3>
-      <p>{selected.error||'Playback is available when the MP4 download finishes.'}</p>
+      <p>{selected.error||'Playback is available when the movie download finishes.'}</p>
      </div>
     {/if}
    </div>

@@ -101,7 +101,7 @@ func (a *application) streamMedia(w http.ResponseWriter,r *http.Request) {
    if filepath.ToSlash(file.Path())==requested &&
       allowedMediaPath(requested) &&
       file.Length()>0 &&
-      file.BytesCompleted()>=file.Length() {
+      verifiedFile(file) {
     valid=true
     break
    }

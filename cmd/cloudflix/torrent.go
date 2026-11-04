@@ -216,7 +216,7 @@ func lookupMovie(ctx context.Context,key,title,year string)(string,string,string
  reqCtx,cancel:=context.WithTimeout(ctx,8*time.Second);defer cancel()
  request,err:=http.NewRequestWithContext(reqCtx,"GET",endpoint,nil)
  if err!=nil{return "","","",""}
- request.Header.Set("Authorization","Bearer "+key)
+ applyTMDBAuthentication(request,key)
  client:=&http.Client{Timeout:8*time.Second}
  response,err:=client.Do(request)
  if err!=nil{return "","","",""}

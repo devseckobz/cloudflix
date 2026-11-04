@@ -32,7 +32,7 @@ jobs:
       - name: Vet backend
         run: go vet ./...
       - name: Validate deployment shell scripts
-        run: bash -n installer/install.sh installer/update.sh installer/pin.sh installer/uninstall.sh
+        run: bash -n installer/install.sh installer/update.sh installer/pin.sh installer/uninstall.sh installer/setup-web-updater.sh installer/web-update-worker.sh
       - name: Verify installer refuses occupied port 80
         run: |
           set -euo pipefail
@@ -53,6 +53,25 @@ jobs:
           grep -Fq 'nginx' <<< "$output"
           grep -Fq 'pid=567' <<< "$output"
           test ! -e /etc/systemd/system/cloudflix.service
+      - name: Verify updater candidate is accessible to a non-root account
+        run: |
+          set -euo pipefail
+          root_tmp="$(sudo mktemp -d)"
+          accessible="$(sudo mktemp -d /run/cloudflix-stage.XXXXXXXX)"
+          trap 'sudo rm -rf "$root_tmp" "$accessible"' EXIT
+          sudo install -m 0755 /bin/true "$root_tmp/candidate"
+          sudo install -m 0755 /bin/true "$accessible/candidate"
+          sudo chmod 0755 "$accessible"
+          sudo runuser -u nobody -- "$accessible/candidate"
+          grep -Fq '"$BIN.new" pin status' installer/update.sh
+          ! grep -Fq '"$work/cloudflix.candidate" pin status' installer/update.sh
+      - name: Verify web updates only trigger fixed root-owned helper
+        run: |
+          set -euo pipefail
+          grep -Fq 'PathExists=/var/lib/cloudflix/update.request' installer/setup-web-updater.sh
+          grep -Fq 'ExecStart=/usr/local/libexec/cloudflix/web-update-worker.sh' installer/setup-web-updater.sh
+          grep -Fq 'CLOUDFLIX_NONINTERACTIVE=1' installer/web-update-worker.sh
+          grep -Fq 'systemctl enable --now cloudflix-update.path' installer/setup-web-updater.sh
       - name: Verify destructive uninstaller never prompts
         run: |
           set -euo pipefail

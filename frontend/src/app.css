@@ -580,3 +580,15 @@ html{color-scheme:dark;scrollbar-color:#3d4c60 #0b1119;scrollbar-width:thin}
 .cinema-player-preparing button{border:1px solid #415569;background:#243548;color:#f4f8fd;border-radius:7px;padding:10px 17px;font-size:12px;margin-top:4px}
 .cinema-player-preparing button:hover{background:#304559}
 @media(max-width:720px){.cinema-player-preparing{min-height:290px;padding:30px 18px}}
+
+
+.download-page .queue-actions .queue-copy-button{
+ width:35px;height:34px;flex:0 0 35px;
+ color:#b6c7d9;
+}
+.download-page .queue-actions .queue-copy-button:hover{
+ color:#fff;background:#334b63;border-color:#6c859f;
+}
+.download-page .queue-actions .queue-copy-button:focus-visible{
+ outline:2px solid #90b9e1;outline-offset:2px;
+}

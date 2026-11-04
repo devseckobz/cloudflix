@@ -42,3 +42,15 @@ test('torrent file details are fetched on demand rather than in the live SSE sna
  assert.match(source, /call\('torrents\/'\+encodeURIComponent\(hash\)\+'\/files'\)/)
  assert.match(source, /if\(fileViewer\?\.hash===hash\)/)
 })
+
+test('rejected files inspection shows metadata loading and retries without deleting torrent',()=>{
+ assert.match(source,/type FileInspection = \{available:boolean,fetching\?:boolean/)
+ assert.match(source,/const fileInspectionPoll=setInterval/)
+ assert.match(source,/inspectedFiles\?\.fetching/)
+ assert.match(source,/loadFileList\(fileViewer\.hash,false,true\)/)
+ assert.match(source,/const retryFileInspection=async/)
+ assert.match(source,/onclick=\{retryFileInspection\}/)
+ assert.match(dialog,/\{:\else if inspectedFiles\?\.fetching\}/)
+ assert.match(dialog,/Only torrent metadata is requested/)
+ assert.doesNotMatch(dialog,/Remove this rejected entry and add the magnet again/)
+})

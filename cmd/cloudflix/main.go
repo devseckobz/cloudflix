@@ -31,6 +31,7 @@ var version = "dev"
 type application struct {
  db *sql.DB
  engine *engine
+ playback *mkvManager
  tmdbKey string
  dataDir string
  authMu sync.Mutex
@@ -66,7 +67,7 @@ func main() {
  if err:=ensureSettingsSchema(db);err!=nil{log.Fatal(err)}
  tmdbKey,err:=loadTMDBKey(db,os.Getenv("TMDB_API_KEY"))
  if err!=nil{log.Fatal(err)}
- a:=&application{db:db,dataDir:dataDir,tmdbKey:tmdbKey,attempts:make(map[string][]time.Time)}
+ a:=&application{db:db,dataDir:dataDir,tmdbKey:tmdbKey,playback:newMKVManager(),attempts:make(map[string][]time.Time)}
  a.engine,err=newEngine(downloads,db,a.tmdbKey)
  if err!=nil{log.Fatal(err)}
  defer a.engine.close()
@@ -87,6 +88,10 @@ func main() {
  mux.HandleFunc("POST /api/torrents/{hash}/{action}",a.require(a.torrentAction))
  mux.HandleFunc("GET /api/files/{hash}",a.require(a.downloadFile))
  mux.HandleFunc("GET /api/media/{hash}",a.require(a.streamMedia))
+ mux.HandleFunc("POST /api/playback/{hash}/prepare",a.require(a.mkvPrepare))
+ mux.HandleFunc("GET /api/playback/{hash}/status",a.require(a.mkvStatus))
+ mux.HandleFunc("GET /api/playback/{hash}/video",a.require(func(w http.ResponseWriter,r *http.Request){a.serveMKVCache(w,r,false)}))
+ mux.HandleFunc("GET /api/playback/{hash}/subtitle",a.require(func(w http.ResponseWriter,r *http.Request){a.serveMKVCache(w,r,true)}))
  mux.HandleFunc("GET /api/torrents/{hash}/files",a.require(a.torrentFiles))
  mux.HandleFunc("GET /api/torrents/{hash}/magnet",a.require(a.torrentMagnet))
  mux.Handle("/",static.Handler())

@@ -7,7 +7,6 @@ import (
  "encoding/hex"
  "encoding/json"
  "errors"
- "fmt"
  "io"
  "net/http"
  "net/url"
@@ -196,10 +195,13 @@ func (a *application) mkvPrepare(w http.ResponseWriter,r *http.Request){
  m:=a.playback
  m.mu.Lock()
  if existing:=m.jobs[key];existing!=nil{
-  m.mu.Unlock()
-  source.Close()
-  respond(w,http.StatusAccepted,a.mkvStatusFor(hash,request.Path))
-  return
+  if existing.state!="error"{
+   m.mu.Unlock()
+   source.Close()
+   respond(w,http.StatusAccepted,a.mkvStatusFor(hash,request.Path))
+   return
+  }
+  delete(m.jobs,key) // Permit a new attempt after a recoverable failure.
  }
  if len(m.jobs)>=32{
   m.mu.Unlock()
@@ -219,13 +221,22 @@ func (a *application) updateMKVJob(job *mkvJob,state,message string){
  job.message=message
  a.playback.mu.Unlock()
 }
+type boundedCommandOutput struct{data bytes.Buffer}
+func (w *boundedCommandOutput)Write(p []byte)(int,error){
+ if w.data.Len()+len(p)>256<<10{return 0,errors.New("media tool output limit exceeded")}
+ return w.data.Write(p)
+}
 func commandFromMKV(ctx context.Context,exe string,source *os.File,args ...string)([]byte,error){
+ // The /proc/self/fd/3 input stays inside an os.Root capability and remains
+ // seekable. Reset the shared offset before starting each external tool.
+ if _,err:=source.Seek(0,io.SeekStart);err!=nil{return nil,err}
  cmd:=exec.CommandContext(ctx,exe,args...)
  cmd.ExtraFiles=[]*os.File{source}
  cmd.Stderr=io.Discard
- output,err:=cmd.Output()
- if len(output)>256<<10{return nil,errors.New("probe output too large")}
- return output,err
+ var output boundedCommandOutput
+ cmd.Stdout=&output
+ err:=cmd.Run()
+ return output.data.Bytes(),err
 }
 func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJob){
  defer source.Close()
@@ -287,7 +298,7 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
   default:continue // Image-based PGS/DVD subtitles cannot become WebVTT text.
   }
   index:=stream.Index
-  if index<0||index>200{return}
+  if index<0||index>200{continue}
   filename:=filepath.Join(dir,key+"."+strconv.Itoa(index)+".vtt")
   temp:=filename+".part"
   _,err:=commandFromMKV(ctx,"ffmpeg",source,"-nostdin","-hide_banner","-loglevel","error",

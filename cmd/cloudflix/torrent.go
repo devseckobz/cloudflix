@@ -239,6 +239,17 @@ func firstMovieGenre(ids []int)string{
  return ""
 }
 
+// Disable payload transfer in the spec before registering any magnet.
+// DisallowDataDownload after AddMagnet leaves a brief request window.
+func addMagnetMetadataOnly(client *torrent.Client,magnet string)(*torrent.Torrent,error){
+ spec,err:=torrent.TorrentSpecFromMagnetUri(magnet)
+ if err!=nil{return nil,err}
+ spec.DisallowDataDownload=true
+ spec.DisallowDataUpload=true
+ tt,_,err:=client.AddTorrentSpec(spec)
+ return tt,err
+}
+
 func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  if err:=ensureMovieRatingSchema(db);err!=nil{return nil,err}
  if err:=ensureMediaSchema(db);err!=nil{return nil,err}
@@ -273,9 +284,8 @@ func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
    e.entries[item.hash]=&item
    continue
   }
-  tt,err:=client.AddMagnet(item.magnet)
+  tt,err:=addMagnetMetadataOnly(client,item.magnet)
   if err!=nil{continue}
-  tt.DisallowDataDownload()
   item.hash=tt.InfoHash().HexString()
   item.torrent=tt
   e.entries[item.hash]=&item
@@ -371,12 +381,11 @@ func (e *engine) add(magnet string)(string,error){
  defer e.mu.Unlock()
  if strings.TrimSpace(e.tmdbKey)==""{return "",errTMDBRequired}
  if len(e.entries)>=100{return "",errors.New("torrent limit reached (100)")}
- tt,err:=e.client.AddMagnet(magnet)
+ tt,err:=addMagnetMetadataOnly(e.client,magnet)
  if err!=nil{return "",errors.New("invalid or unsupported magnet")}
  hash:=tt.InfoHash().HexString()
- // A duplicate request must not pause the already validated torrent.
+ // A duplicate request must not pause an existing validated torrent.
  if _,exists:=e.entries[hash];exists{return hash,nil}
- tt.DisallowDataDownload()
  result,err:=e.db.Exec("INSERT INTO torrents(hash,magnet) VALUES(?,?)",hash,magnet)
  if err!=nil{tt.Drop();return "",err}
  queuePosition,err:=result.LastInsertId()

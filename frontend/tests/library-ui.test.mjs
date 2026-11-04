@@ -32,16 +32,17 @@ test('Home shows completed movie cards with title, year and TMDB ratings',()=>{
  assert.match(home,/openMovie\(movie\)/)
 })
 
-test('Home has real previous, next, and numbered pages in the top navigation',()=>{
- assert.match(topbar,/class="top-library-pagination"/)
- assert.match(topbar,/libraryView\.totalPages/)
- assert.match(topbar,/libraryView\.pages/)
- assert.match(topbar,/libraryPage=libraryView\.page-1/)
- assert.match(topbar,/libraryPage=libraryView\.page\+1/)
- assert.match(topbar,/libraryPage=number/)
- assert.doesNotMatch(home,/movie-pagination-buttons|movie-library-pagination/)
- assert.match(home,/class="library-results-count"/)
+test('Home puts boxed pagination above the results count below the grid',()=>{
+ assert.doesNotMatch(topbar,/top-library-pagination/)
+ assert.match(home,/class="library-pagination-footer"/)
+ assert.match(home,/class="library-bottom-pagination"/)
+ assert.match(home,/libraryView\.pages/)
+ assert.match(home,/libraryPage=libraryView\.page-1/)
+ assert.match(home,/libraryPage=libraryView\.page\+1/)
+ assert.match(home,/libraryPage=number/)
  assert.match(home,/Showing \{libraryView\.from\}–\{libraryView\.to\} of \{libraryView\.total\}/)
+ assert.ok(home.indexOf('class="library-bottom-pagination"') > home.indexOf('class="movie-library-grid"'))
+ assert.ok(home.indexOf('class="library-results-count"') > home.indexOf('class="library-bottom-pagination"'))
 })
 
 test('Stats moved to Downloader and sidebar has no extra library section',()=>{

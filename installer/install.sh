@@ -11,6 +11,52 @@ VERSION="${CLOUDFLIX_VERSION:-latest}"
 
 die(){ printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 info(){ printf '[cloudflix] %s\n' "$*"; }
+
+# Display the VPS's actual IP after setup (advisory only; never changes routing).
+valid_ipv4(){
+ local addr="$1" a b c d extra n
+ [[ "$addr" =~ ^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || return 1
+ IFS=. read -r a b c d extra <<< "$addr"
+ for n in "$a" "$b" "$c" "$d";do
+   (("${#n}" <= 3 && 10#$n <= 255)) || return 1
+ done
+}
+detect_vps_ip(){
+ local remote="" local_ip="" candidate=""
+ if command -v curl >/dev/null 2>&1;then
+   remote="$(curl -4fsS --connect-timeout 3 --max-time 6 https://api.ipify.org 2>/dev/null || true)"
+ elif command -v wget >/dev/null 2>&1;then
+   remote="$(wget -4 -q -T 6 -O - https://api.ipify.org 2>/dev/null || true)"
+ fi
+ if valid_ipv4 "$remote";then
+   printf '%s' "$remote"
+   return 0
+ fi
+ if command -v ip >/dev/null 2>&1;then
+   candidate="$(ip -4 route get 1.1.1.1 2>/dev/null || true)"
+   if [[ "$candidate" =~ [[:space:]]src[[:space:]]([0-9.]+) ]];then
+      local_ip="${BASH_REMATCH[1]}"
+   fi
+ fi
+ if ! valid_ipv4 "$local_ip" && command -v hostname >/dev/null 2>&1;then
+   local_ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+ fi
+ if valid_ipv4 "$local_ip";then
+   printf '%s' "$local_ip"
+   return 0
+ fi
+ return 1
+}
+print_access_url(){
+ local address=""
+ address="$(detect_vps_ip)" || address=""
+ if [[ -n "$address" ]];then
+   info "Open http://$address and sign in with your 6-digit PIN."
+ else
+   info "Could not detect the VPS IP; check 'ip -4 addr' or your VPS provider dashboard."
+ fi
+}
+
 [[ "${EUID}" -eq 0 ]] || die "Run with root privileges: wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/install.sh | sudo bash"
 command -v systemctl >/dev/null || die "systemd is required"
 [[ "$(uname -s)" == "Linux" ]] || die "Linux required"
@@ -138,7 +184,7 @@ if [[ "$healthy" != "1" ]];then
   die "Cloudflix did not start on port 80. Check: journalctl -u cloudflix -n 80"
 fi
 info "Cloudflix is listening on all VPS interfaces at port 80."
-info "Open http://YOUR_VPS_IP and sign in with your 6-digit PIN."
+print_access_url
 info "Make sure your VPS firewall/provider allows TCP port 80 from your trusted IP."
 info "WARNING: HTTP is unencrypted; the PIN, session cookies and TMDB token may be intercepted."
 info "Completed. systemctl status cloudflix"

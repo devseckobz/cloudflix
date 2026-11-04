@@ -33,6 +33,8 @@ type entry struct {
  lookedUp bool
  attempts int
  retryAt time.Time
+ validated bool
+ rejectionReason string
 }
 type engine struct{
  mu sync.Mutex
@@ -62,8 +64,62 @@ func ensureMovieRatingSchema(db *sql.DB) error {
  return err
 }
 
+// Track magnets rejected after metadata inspection without requesting payloads.
+func ensureMediaSchema(db *sql.DB) error {
+ rows,err:=db.Query("PRAGMA table_info(torrents)")
+ if err!=nil{return err}
+ found:=false
+ for rows.Next(){
+  var index,required,pk int
+  var name,typ string
+  var def sql.NullString
+  if err:=rows.Scan(&index,&name,&typ,&required,&def,&pk);err!=nil{rows.Close();return err}
+  if name=="rejection_reason"{found=true}
+ }
+ if err:=rows.Err();err!=nil{rows.Close();return err}
+ if err:=rows.Close();err!=nil{return err}
+ if found{return nil}
+ _,err=db.Exec("ALTER TABLE torrents ADD COLUMN rejection_reason TEXT NOT NULL DEFAULT ''")
+ return err
+}
+
+func allowedMediaPath(path string)bool{
+ local:=filepath.FromSlash(path)
+ if path=="" || !filepath.IsLocal(local) || filepath.ToSlash(local)!=path{return false}
+ ext:=strings.ToLower(filepath.Ext(path))
+ return ext==".mp4" || ext==".srt"
+}
+
+func selectedMediaFiles(paths []string)(selected []string,hasVideo bool){
+ for _,path:=range paths{
+  if !allowedMediaPath(path){continue}
+  selected=append(selected,path)
+  if strings.EqualFold(filepath.Ext(path),".mp4"){hasVideo=true}
+ }
+ return
+}
+
+func selectedFileStats(tt *torrent.Torrent)(size,completed int64,files []map[string]any){
+ files=make([]map[string]any,0)
+ if tt==nil || tt.Info()==nil{return}
+ for _,file:=range tt.Files(){
+  path:=filepath.ToSlash(file.Path())
+  if !allowedMediaPath(path){continue}
+  n:=file.Length()
+  if n<=0{continue}
+  downloaded:=file.BytesCompleted()
+  if downloaded<0{downloaded=0}
+  if downloaded>n{downloaded=n}
+  size+=n
+  completed+=downloaded
+  files=append(files,map[string]any{"path":path,"size":n,"completed":downloaded})
+ }
+ return
+}
+
 func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  if err:=ensureMovieRatingSchema(db);err!=nil{return nil,err}
+ if err:=ensureMediaSchema(db);err!=nil{return nil,err}
  config:=torrent.NewDefaultClientConfig()
  config.DataDir=downloads
  config.Seed=false
@@ -81,33 +137,82 @@ func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  if err!=nil{return nil,err}
  e:=&engine{client:client,db:db,downloads:downloads,tmdbKey:key,entries:make(map[string]*entry)}
  if key!=""{_,_=db.Exec("UPDATE torrents SET looked_up=0 WHERE (poster='' OR rating=0) AND looked_up=1")}
- rows,err:=db.Query("SELECT hash,magnet,paused,title,year,poster,backdrop,rating,looked_up FROM torrents")
+ rows,err:=db.Query("SELECT hash,magnet,paused,title,year,poster,backdrop,rating,looked_up,rejection_reason FROM torrents")
  if err!=nil{client.Close();return nil,err}
  defer rows.Close()
  for rows.Next(){
   var item entry
   var paused,lookedUp int
-  if err:=rows.Scan(&item.hash,&item.magnet,&paused,&item.title,&item.year,&item.poster,&item.backdrop,&item.rating,&lookedUp);err!=nil{client.Close();return nil,err}
+  if err:=rows.Scan(&item.hash,&item.magnet,&paused,&item.title,&item.year,&item.poster,&item.backdrop,&item.rating,&lookedUp,&item.rejectionReason);err!=nil{client.Close();return nil,err}
+  item.paused=paused!=0;item.lookedUp=lookedUp!=0
+  if item.rejectionReason!="" {
+   e.entries[item.hash]=&item
+   continue
+  }
   tt,err:=client.AddMagnet(item.magnet)
   if err!=nil{continue}
+  tt.DisallowDataDownload()
   item.hash=tt.InfoHash().HexString()
-  item.torrent=tt;item.paused=paused!=0;item.lookedUp=lookedUp!=0
+  item.torrent=tt
   e.entries[item.hash]=&item
   e.startWhenReady(&item)
  }
  return e,nil
 }
 func (e *engine) close(){e.client.Close()}
+// Request metadata first and select only MP4 and SRT payload files.
 func (e *engine) startWhenReady(item *entry){
  go func(){
-  select{case <-item.torrent.GotInfo():case <-time.After(24*time.Hour):return}
+  tt:=item.torrent
+  if tt==nil{return}
+  select{
+  case <-tt.GotInfo():
+  case <-time.After(10*time.Minute):
+   e.rejectTorrent(item,"Could not fetch torrent metadata. No movie was downloaded.")
+   return
+  }
   e.mu.Lock()
   defer e.mu.Unlock()
-  if e.entries[item.hash]!=item{return}
-  item.torrent.DownloadAll()
-  if item.paused {item.torrent.DisallowDataDownload()}
+  if e.entries[item.hash]!=item || item.torrent!=tt{return}
+  paths:=make([]string,0)
+  for _,file:=range tt.Files(){paths=append(paths,filepath.ToSlash(file.Path()))}
+  _,hasVideo:=selectedMediaFiles(paths)
+  if !hasVideo{
+   e.rejectTorrentLocked(item,"Rejected: torrent contains no .mp4 movie. Only .mp4 and .srt files are permitted.")
+   return
+  }
+  // Never call DownloadAll. Pieces can straddle a selected and skipped file,
+  // so a small number of adjacent boundary bytes may still be transferred.
+  for _,file:=range tt.Files(){file.SetPriority(torrent.PiecePriorityNone)}
+  for _,file:=range tt.Files(){
+   if allowedMediaPath(filepath.ToSlash(file.Path())) && file.Length()>0{file.Download()}
+  }
+  item.validated=true
+  if !item.paused{tt.AllowDataDownload()}
  }()
 }
+
+func (e *engine) rejectTorrent(item *entry,reason string){
+ e.mu.Lock()
+ defer e.mu.Unlock()
+ e.rejectTorrentLocked(item,reason)
+}
+func (e *engine) rejectTorrentLocked(item *entry,reason string){
+ if e.entries[item.hash]!=item || item.rejectionReason!=""{return}
+ if e.db!=nil{
+  if _,err:=e.db.Exec("UPDATE torrents SET rejection_reason=? WHERE hash=?",reason,item.hash);err!=nil{
+   reason="Torrent validation failed (could not save rejection)."
+  }
+ }
+ item.rejectionReason=reason
+ if item.torrent!=nil{
+  item.torrent.DisallowDataDownload()
+  item.torrent.Drop()
+  item.torrent=nil
+ }
+ item.validated=false
+}
+
 var errTMDBRequired=errors.New("TMDB API key is required. Open Settings to configure your TMDB API key before downloading.")
 
 func (e *engine) add(magnet string)(string,error){
@@ -123,6 +228,7 @@ func (e *engine) add(magnet string)(string,error){
  if len(e.entries)>=100{return "",errors.New("torrent limit reached (100)")}
  tt,err:=e.client.AddMagnet(magnet)
  if err!=nil{return "",errors.New("invalid or unsupported magnet")}
+ tt.DisallowDataDownload()
  hash:=tt.InfoHash().HexString()
  if _,exists:=e.entries[hash];exists{return hash,nil}
  if _,err=e.db.Exec("INSERT INTO torrents(hash,magnet) VALUES(?,?)",hash,magnet);err!=nil{tt.Drop();return "",err}
@@ -136,16 +242,18 @@ func (e *engine) action(hash,action string)error{
  item:=e.entries[hash];if item==nil{return errors.New("torrent not found")}
  switch action{
  case "pause":
+  if item.rejectionReason!="" || item.torrent==nil{return errors.New("rejected torrent cannot be paused")}
   if _,err:=e.db.Exec("UPDATE torrents SET paused=1 WHERE hash=?",hash);err!=nil{return err}
   item.paused=true
   item.torrent.DisallowDataDownload()
  case "resume":
+  if item.rejectionReason!="" || item.torrent==nil{return errors.New("rejected torrent cannot be resumed")}
   if _,err:=e.db.Exec("UPDATE torrents SET paused=0 WHERE hash=?",hash);err!=nil{return err}
   item.paused=false
-  if item.torrent.Info()!=nil{item.torrent.AllowDataDownload();item.torrent.DownloadAll()}
+  if item.validated{item.torrent.AllowDataDownload()}
  case "remove":
   if _,err:=e.db.Exec("DELETE FROM torrents WHERE hash=?",hash);err!=nil{return err}
-  item.torrent.Drop()
+  if item.torrent!=nil{item.torrent.Drop()}
   delete(e.entries,hash)
  default:return errors.New("unknown action")
  }
@@ -155,28 +263,34 @@ func (e *engine) snapshot()[]map[string]any{
  e.mu.Lock();defer e.mu.Unlock()
  movies:=make([]map[string]any,0,len(e.entries))
  for _,item:=range e.entries{
-  tt:=item.torrent
-  name:=tt.Name()
-  if name==""{name="Fetching metadata..."}
-  if item.title!=""{name=item.title}
-  size:=tt.Length()
-  completed:=tt.BytesCompleted()
-  percent:=0.0
-  if size>0{percent=100*float64(completed)/float64(size)}
-  if percent>100{percent=100}
+  name:=item.title
+  if name==""{name="Fetching movie metadata..."}
   status:="metadata"
-  if tt.Info()!=nil && size>0 && completed>=size{status="completed"}else if item.paused{status="paused"}else if tt.Info()!=nil{status="downloading"}
+  var size,completed int64
   files:=make([]map[string]any,0)
-  if tt.Info()!=nil{
-   for _,file:=range tt.Files(){
-    path:=filepath.ToSlash(file.Path())
-    if path==""{continue}
-    files=append(files,map[string]any{"path":path,"size":file.Length()})
+  if item.rejectionReason!=""{
+   status="rejected"
+  }else if item.torrent!=nil {
+   tt:=item.torrent
+   if item.title=="" && tt.Name()!=""{name=tt.Name()}
+   if tt.Info()!=nil{
+    size,completed,files=selectedFileStats(tt)
+   }
+   if item.validated && size>0 && completed>=size {
+    status="completed"
+   }else if item.paused{
+    status="paused"
+   }else if item.validated{
+    status="downloading"
    }
   }
+  progress:=0.0
+  if size>0{progress=100*float64(completed)/float64(size)}
+  if progress>100{progress=100}
   movies=append(movies,map[string]any{
-   "hash":item.hash,"title":name,"year":item.year,"poster":item.poster,"backdrop":item.backdrop,"rating":item.rating,
-   "size":size,"completed":completed,"progress":percent,"status":status,"files":files,
+   "hash":item.hash,"title":name,"year":item.year,"poster":item.poster,
+   "backdrop":item.backdrop,"rating":item.rating,"size":size,"completed":completed,
+   "progress":progress,"status":status,"files":files,"error":item.rejectionReason,
   })
  }
  return movies
@@ -207,7 +321,7 @@ func (e *engine) refreshMetadata(ctx context.Context){
  e.mu.Lock()
  key:=e.tmdbKey
  for _,item:=range e.entries{
-  if item.lookedUp || item.torrent.Info()==nil || time.Now().Before(item.retryAt){continue}
+  if item.lookedUp || item.rejectionReason!="" || item.torrent==nil || item.torrent.Info()==nil || time.Now().Before(item.retryAt){continue}
   title,year:=identify(item.torrent.Name())
   if title==""{continue}
   item.title=title;item.year=year
@@ -297,8 +411,10 @@ func (a *application) downloadFile(w http.ResponseWriter,r *http.Request){
  e.mu.Lock()
  item:=e.entries[hash]
  valid:=false
- if item!=nil && item.torrent.Info()!=nil{
-  for _,file:=range item.torrent.Files(){if filepath.ToSlash(file.Path())==wanted{valid=true;break}}
+ if item!=nil && item.validated && item.torrent!=nil && item.torrent.Info()!=nil{
+  for _,file:=range item.torrent.Files(){
+   if filepath.ToSlash(file.Path())==wanted && allowedMediaPath(wanted) && file.BytesCompleted()>=file.Length(){valid=true;break}
+  }
  }
  e.mu.Unlock()
  if !valid || !filepath.IsLocal(filepath.FromSlash(wanted)){fail(w,404,"file not found");return}

@@ -357,7 +357,10 @@
        throw new Error('Magnet link unavailable for this download.')
      }
      if(!await copyToClipboard(result.magnet)){
-       throw new Error('Clipboard access was denied by your browser.')
+       // Plain-HTTP VPS pages can be denied clipboard permissions. The
+       // read-only prompt still lets the user select and copy the magnet.
+       window.prompt('Copy this magnet link:',result.magnet)
+       return
      }
      notify('Magnet link copied')
    }catch(e){

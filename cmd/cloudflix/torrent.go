@@ -29,6 +29,7 @@ type entry struct {
  paused bool
  title string
  year string
+ genre string
  poster string
  backdrop string
  rating float64
@@ -201,9 +202,47 @@ func purgeLegacyFileManifests(db *sql.DB)error{
  return err
 }
 
+// Movie genre comes from TMDB's genre_ids on search results.
+// The migration requeues existing matched movies exactly once so their
+// genre can be backfilled, without modifying movie files or existing art.
+func ensureMovieGenreSchema(db *sql.DB)error{
+ rows,err:=db.Query("PRAGMA table_info(torrents)")
+ if err!=nil{return err}
+ found:=false
+ for rows.Next(){
+  var index,required,pk int
+  var name,typ string
+  var def sql.NullString
+  if err:=rows.Scan(&index,&name,&typ,&required,&def,&pk);err!=nil{rows.Close();return err}
+  if name=="genre"{found=true}
+ }
+ if err:=rows.Err();err!=nil{rows.Close();return err}
+ if err:=rows.Close();err!=nil{return err}
+ if found{return nil}
+ if _,err:=db.Exec("ALTER TABLE torrents ADD COLUMN genre TEXT NOT NULL DEFAULT ''");err!=nil{return err}
+ _,err=db.Exec("UPDATE torrents SET looked_up=0 WHERE looked_up=1 AND rejection_reason=''")
+ return err
+}
+
+var tmdbMovieGenres=map[int]string{
+ 28:"Action",12:"Adventure",16:"Animation",35:"Comedy",
+ 80:"Crime",99:"Documentary",18:"Drama",10751:"Family",
+ 14:"Fantasy",36:"History",27:"Horror",10402:"Music",
+ 9648:"Mystery",10749:"Romance",878:"Sci-Fi",10770:"TV Movie",
+ 53:"Thriller",10752:"War",37:"Western",
+}
+
+func firstMovieGenre(ids []int)string{
+ for _,id:=range ids{
+  if name,ok:=tmdbMovieGenres[id];ok{return name}
+ }
+ return ""
+}
+
 func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  if err:=ensureMovieRatingSchema(db);err!=nil{return nil,err}
  if err:=ensureMediaSchema(db);err!=nil{return nil,err}
+ if err:=ensureMovieGenreSchema(db);err!=nil{return nil,err}
  if err:=purgeLegacyFileManifests(db);err!=nil{return nil,err}
  config:=torrent.NewDefaultClientConfig()
  config.DataDir=downloads
@@ -222,13 +261,13 @@ func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  if err!=nil{return nil,err}
  e:=&engine{client:client,db:db,downloads:downloads,tmdbKey:key,entries:make(map[string]*entry)}
  if key!=""{_,_=db.Exec("UPDATE torrents SET looked_up=0 WHERE (poster='' OR rating=0) AND looked_up=1")}
- rows,err:=db.Query("SELECT rowid,hash,magnet,paused,title,year,poster,backdrop,rating,looked_up,rejection_reason FROM torrents ORDER BY rowid ASC")
+ rows,err:=db.Query("SELECT rowid,hash,magnet,paused,title,year,genre,poster,backdrop,rating,looked_up,rejection_reason FROM torrents ORDER BY rowid ASC")
  if err!=nil{client.Close();return nil,err}
  defer rows.Close()
  for rows.Next(){
   var item entry
   var paused,lookedUp int
-  if err:=rows.Scan(&item.queuePosition,&item.hash,&item.magnet,&paused,&item.title,&item.year,&item.poster,&item.backdrop,&item.rating,&lookedUp,&item.rejectionReason);err!=nil{client.Close();return nil,err}
+  if err:=rows.Scan(&item.queuePosition,&item.hash,&item.magnet,&paused,&item.title,&item.year,&item.genre,&item.poster,&item.backdrop,&item.rating,&lookedUp,&item.rejectionReason);err!=nil{client.Close();return nil,err}
   item.paused=paused!=0;item.lookedUp=lookedUp!=0
   if item.rejectionReason!="" {
    e.entries[item.hash]=&item
@@ -434,7 +473,7 @@ func (e *engine) snapshot()[]map[string]any{
   if size>0{progress=100*float64(completed)/float64(size)}
   if progress>100{progress=100}
   movies=append(movies,map[string]any{
-   "hash":item.hash,"title":name,"year":item.year,"poster":item.poster,
+   "hash":item.hash,"title":name,"year":item.year,"genre":item.genre,"poster":item.poster,
    "backdrop":item.backdrop,"rating":item.rating,"size":size,"completed":completed,
    "progress":progress,"status":status,"files":files,"error":item.rejectionReason,
   })
@@ -484,18 +523,18 @@ func (e *engine) refreshMetadata(ctx context.Context){
  e.mu.Unlock()
  for _,item:=range pending{
   select{case <-ctx.Done():return;default:}
-  title,year,poster,backdrop,rating:=lookupMovie(ctx,key,item.title,item.year)
+  title,year,poster,backdrop,rating,genre:=lookupMovie(ctx,key,item.title,item.year)
   if title==""{continue}
   e.mu.Lock()
   if current:=e.entries[item.hash];current!=nil{
-   current.title=title;current.year=year;current.poster=poster;current.backdrop=backdrop;current.rating=rating;current.lookedUp=true
-   _,_=e.db.Exec("UPDATE torrents SET title=?,year=?,poster=?,backdrop=?,rating=?,looked_up=1 WHERE hash=?",title,year,poster,backdrop,rating,item.hash)
+   current.title=title;current.year=year;current.genre=genre;current.poster=poster;current.backdrop=backdrop;current.rating=rating;current.lookedUp=true
+   _,_=e.db.Exec("UPDATE torrents SET title=?,year=?,genre=?,poster=?,backdrop=?,rating=?,looked_up=1 WHERE hash=?",title,year,genre,poster,backdrop,rating,item.hash)
   }
   e.mu.Unlock()
  }
 }
 // TMDB vote_average is a rating from 0 to 10. Zero means not yet rated.
-func parseTMDBMovie(data io.Reader, fallbackYear string)(string,string,string,string,float64,error){
+func parseTMDBMovie(data io.Reader, fallbackYear string)(string,string,string,string,float64,string,error){
  var result struct {
   Results []struct{
    Title string `json:"title"`
@@ -503,37 +542,38 @@ func parseTMDBMovie(data io.Reader, fallbackYear string)(string,string,string,st
    PosterPath string `json:"poster_path"`
    BackdropPath string `json:"backdrop_path"`
    Rating float64 `json:"vote_average"`
+   GenreIDs []int `json:"genre_ids"`
   } `json:"results"`
  }
- if err:=json.NewDecoder(io.LimitReader(data,1<<20)).Decode(&result);err!=nil{return "","","","",0,err}
- if len(result.Results)==0{return "","","","",0,nil}
+ if err:=json.NewDecoder(io.LimitReader(data,1<<20)).Decode(&result);err!=nil{return "","","","",0,"",err}
+ if len(result.Results)==0{return "","","","",0,"",nil}
  first:=result.Results[0]
  year:=fallbackYear
  if len(first.ReleaseDate)>=4{year=first.ReleaseDate[:4]}
  rating:=first.Rating
  if rating<0 || rating>10 || rating!=rating{rating=0}
- return first.Title,year,first.PosterPath,first.BackdropPath,rating,nil
+ return first.Title,year,first.PosterPath,first.BackdropPath,rating,firstMovieGenre(first.GenreIDs),nil
 }
 
-func lookupMovie(ctx context.Context,key,title,year string)(string,string,string,string,float64){
+func lookupMovie(ctx context.Context,key,title,year string)(string,string,string,string,float64,string){
  q:=url.Values{"query":{title},"include_adult":{"false"}}
  if year!=""{q.Set("year",year)}
  endpoint:="https://api.themoviedb.org/3/search/movie?"+q.Encode()
  reqCtx,cancel:=context.WithTimeout(ctx,8*time.Second);defer cancel()
  request,err:=http.NewRequestWithContext(reqCtx,"GET",endpoint,nil)
- if err!=nil{return "","","","",0}
+ if err!=nil{return "","","","",0,""}
  applyTMDBAuthentication(request,key)
  client:=&http.Client{
   Timeout:8*time.Second,
   CheckRedirect:func(_ *http.Request,_ []*http.Request)error{return http.ErrUseLastResponse},
  }
  response,err:=client.Do(request)
- if err!=nil{return "","","","",0}
+ if err!=nil{return "","","","",0,""}
  defer response.Body.Close()
- if response.StatusCode!=http.StatusOK{return "","","","",0}
- resultTitle,resultYear,poster,backdrop,rating,err:=parseTMDBMovie(response.Body,year)
- if err!=nil{return "","","","",0}
- return resultTitle,resultYear,poster,backdrop,rating
+ if response.StatusCode!=http.StatusOK{return "","","","",0,""}
+ resultTitle,resultYear,poster,backdrop,rating,genre,err:=parseTMDBMovie(response.Body,year)
+ if err!=nil{return "","","","",0,""}
+ return resultTitle,resultYear,poster,backdrop,rating,genre
 }
 func (a *application) addMagnet(w http.ResponseWriter,r *http.Request){
  var req map[string]string

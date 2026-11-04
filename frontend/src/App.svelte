@@ -1,9 +1,10 @@
 <script lang="ts">
  import { onMount } from 'svelte'
  import { selectLibraryPage, countDownloading } from './lib/library.js'
- import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight } from '@lucide/svelte'
+ import {findPlayback,mediaURL} from './lib/media.js'
+ import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight, Maximize2, Clapperboard as FilmClap, MonitorPlay } from '@lucide/svelte'
 
- type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,files:{path:string,size:number}[]}
+ type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
  let page = $state<'home'|'downloader'|'settings'>(typeof window!=='undefined'&&window.location.pathname==='/settings'?'settings':typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
  let auth = $state<'loading'|'setup'|'login'|'ready'>('loading')
  let pin = $state('')
@@ -15,6 +16,9 @@
  let search = $state('')
  let libraryPage = $state(1)
  let selected = $state<Movie|null>(null)
+ let playerVideo = $state<HTMLVideoElement|null>(null)
+ let playbackError = $state('')
+ let noticeTimer:ReturnType<typeof setTimeout>|undefined
  let connected = $state(false)
  let version = $state('v0.1.0-alpha')
  let live:EventSource|null = null
@@ -41,6 +45,7 @@
  const completed = $derived(movies.filter(m=>m.status==='completed').length)
  const active = $derived(countDownloading(movies))
  const libraryView = $derived(selectLibraryPage(movies,search,libraryPage,10))
+ const selectedPlayback = $derived(selected?findPlayback(selected.files):{video:null,subtitles:[]})
  const call = async (path:string,method='GET',data?:object)=>{
    let response:Response
    try{
@@ -56,6 +61,30 @@
      throw new Error(result.error||'Server error (HTTP '+response.status+').')
    }
    return result
+ }
+ const notify=(message:string)=>{
+   if(noticeTimer!==undefined)clearTimeout(noticeTimer)
+   notice=message
+   noticeTimer=setTimeout(()=>{notice='';noticeTimer=undefined},4200)
+ }
+ const openMovie=(movie:Movie)=>{
+   playbackError=''
+   playerVideo=null
+   selected=movie
+ }
+ const closeMovie=()=>{
+   playerVideo?.pause()
+   playerVideo=null
+   selected=null
+   playbackError=''
+ }
+ const enterFullscreen=async()=>{
+   const video=playerVideo
+   if(!video)return
+   try{
+     if(video.requestFullscreen)await video.requestFullscreen()
+     else (video as HTMLVideoElement & {webkitEnterFullscreen?:()=>void}).webkitEnterFullscreen?.()
+   }catch{playbackError='Fullscreen is unavailable in this browser. You can also use the video controls.'}
  }
  const loadSettings=async()=>{
    settingsLoading=true
@@ -73,7 +102,7 @@
      const result=await call('settings','PUT',{tmdbApiKey:tmdbToken.trim()})
      tmdbConfigured=Boolean(result.tmdbConfigured)
      tmdbToken=''
-     notice='TMDB API token verified and saved. Movie artwork will refresh automatically.'
+     notify('TMDB API token verified and saved. Movie artwork will refresh automatically.')
    }catch(e){error=(e as Error).message}
    finally{settingsBusy=false}
  }
@@ -84,7 +113,7 @@
      await call('settings','PUT',{tmdbApiKey:''})
      tmdbConfigured=false
      tmdbToken=''
-     notice='TMDB API token removed.'
+     notify('TMDB API token removed.')
    }catch(e){error=(e as Error).message}
    finally{settingsBusy=false}
  }
@@ -108,7 +137,7 @@
    const handleBack=()=>{page=window.location.pathname==='/settings'?'settings':window.location.pathname==='/downloader'?'downloader':'home';if(page==='settings'||page==='downloader')void loadSettings()}
    window.addEventListener('popstate',handleBack)
    checkAuth()
-   return ()=>{live?.close();window.removeEventListener('popstate',handleBack)}
+   return ()=>{live?.close();if(noticeTimer!==undefined)clearTimeout(noticeTimer);window.removeEventListener('popstate',handleBack)}
  })
  const authenticate=async()=>{
    error=''
@@ -127,7 +156,7 @@
      pin=''
    }finally{submitting=false}
  }
- const signOut=async()=>{try{await call('auth/logout','POST',{})}catch{}live?.close();connected=false;auth='login';movies=[]}
+ const signOut=async()=>{closeMovie();try{await call('auth/logout','POST',{})}catch{}live?.close();connected=false;auth='login';movies=[]}
  const add=async()=>{
    error='';notice='';submitting=true
    try{
@@ -140,7 +169,7 @@
      }
      await call('magnets','POST',{magnet:magnet.trim()})
      magnet=''
-     notice='Magnet added to your download queue'
+     notify('Magnet queued. Checking its files for an MP4 movie before downloading.')
      await refresh()
    }catch(e){
      error=(e as Error).message
@@ -150,7 +179,7 @@
  const action=async(m:Movie,verb:'pause'|'resume'|'remove')=>{
    if(verb==='remove'&&!confirm('Remove this torrent from Cloudflix? Downloaded files are retained.'))return
    error='';notice=''
-   try{await call('torrents/'+encodeURIComponent(m.hash)+'/'+verb,'POST',{});await refresh()}
+   try{await call('torrents/'+encodeURIComponent(m.hash)+'/'+verb,'POST',{});if(verb==='remove' && selected?.hash===m.hash)closeMovie();await refresh()}
    catch(e){error=(e as Error).message}
  }
 </script>
@@ -207,41 +236,50 @@
    {#if notice}<div class="toast success"><CheckCircle2 size={16}/>{notice}<button onclick={()=>notice=''} aria-label="Dismiss"><X size={16}/></button></div>{/if}
    {#if error}<div class="toast error"><AlertCircle size={16}/>{error}<button onclick={()=>error=''} aria-label="Dismiss"><X size={16}/></button></div>{/if}
    {#if page==='home'}
-    <div class="dashboard-content library-page">
-     <div class="library-toolbar">
-      <div class="library-heading">
-       <h1>Movies</h1>
-       <p>{libraryView.total} downloaded {libraryView.total===1?'movie':'movies'}</p>
+    <section class="film-library" aria-label="Your downloaded movie library">
+     <div class="library-masthead">
+      <div class="library-intro">
+       <span class="library-kicker"><span class="kicker-mark"></span> PRIVATE SCREENING ROOM <span class="kicker-index">/ YOUR COLLECTION</span></span>
+       <h1>The collection<span class="title-period">.</span></h1>
+       <p>{libraryView.total} {libraryView.total===1?'film':'films'} ready for your next movie night.</p>
       </div>
-      <div class="searchbox library-search">
-       <Search size={18}/>
-       <input value={search} oninput={(event)=>{search=event.currentTarget.value;libraryPage=1}} placeholder="Search movies" aria-label="Search downloaded movies"/>
+      <div class="library-controls">
+       <label class="cinema-search">
+        <Search size={18}/>
+        <input value={search} oninput={(event)=>{search=event.currentTarget.value;libraryPage=1}} placeholder="Find a movie or year" aria-label="Search downloaded movies"/>
+        {#if search.trim()}<button type="button" aria-label="Clear search" onclick={()=>{search='';libraryPage=1}}><X size={15}/></button>{/if}
+       </label>
       </div>
      </div>
+     <div class="shelf-divider">
+      <span><span class="shelf-light"></span> ALL FILMS</span>
+      <div class="shelf-line"></div>
+      <span class="shelf-count">{String(libraryView.total).padStart(2,'0')} TITLES</span>
+     </div>
      {#if libraryView.movies.length}
-      <div class="movie-grid library-grid">
-       {#each libraryView.movies as m (m.hash)}
-        <button type="button" class="movie-card" onclick={()=>selected=m} title={m.title+' ('+(m.year||'Year unknown')+')'}>
-         <div class="poster">
-          {#if m.poster}
-           <img src={poster(m.poster)} alt={'Poster for '+m.title} loading="lazy"/>
+      <div class="cinema-wall">
+       {#each libraryView.movies as movie,i (movie.hash)}
+        <button class="cinema-tile" type="button" title={'Play '+movie.title} onclick={()=>openMovie(movie)}>
+         <div class="cinema-poster">
+          {#if movie.poster}
+           <img src={poster(movie.poster)} alt={'Poster for '+movie.title} loading="lazy"/>
           {:else}
-           <div class="poster-fallback"><Film size={38}/><small>NO POSTER</small></div>
+           <div class="cinema-art-placeholder" aria-hidden="true"><FilmClap size={43} strokeWidth={1.1}/><span>CLOUDFLIX</span></div>
           {/if}
+          <span class="film-corner-number">{String((libraryView.page-1)*10+i+1).padStart(2,'0')}</span>
+          <span class="film-poster-rating"><Star size={13} fill={movie.rating>0?'currentColor':'none'} /> {movie.rating>0?movie.rating.toFixed(1):'N/A'}</span>
+          <span class="film-play-ring" aria-hidden="true"><Play size={23} fill="currentColor" strokeWidth={1.2}/></span>
+          <span class="film-watch-label">PLAY MOVIE <span aria-hidden="true">↗</span></span>
          </div>
-         <h3>{m.title}</h3>
-         <div class="movie-details">
-          <span>{m.year||'Year N/A'}</span>
-          <span class="movie-rating" title="TMDB rating out of 10">
-           <Star size={13} fill={m.rating>0?'currentColor':'none'}/>
-           {m.rating>0?m.rating.toFixed(1):'N/A'}
-          </span>
+         <div class="cinema-tile-copy">
+          <h3>{movie.title}</h3>
+          <span>{movie.year||'YEAR UNKNOWN'}</span>
          </div>
         </button>
        {/each}
       </div>
-      <nav class="library-pagination" aria-label="Movie pages">
-       <span class="pagination-summary">Showing {libraryView.from}–{libraryView.to} of {libraryView.total}</span>
+      <nav class="library-pagination cinema-pagination" aria-label="Movie pages">
+       <span class="pagination-summary">{String(libraryView.from).padStart(2,'0')}—{String(libraryView.to).padStart(2,'0')} <span class="pagination-slash">/</span> {String(libraryView.total).padStart(2,'0')} FILMS</span>
        {#if libraryView.totalPages>1}
         <div class="pagination-buttons">
          <button type="button" aria-label="Previous page" disabled={libraryView.page===1} onclick={()=>libraryPage=libraryView.page-1}><ChevronLeft size={17}/></button>
@@ -253,14 +291,24 @@
        {/if}
       </nav>
      {:else}
-      <div class="empty library-empty">
-       <div class="empty-icon"><Film size={30}/></div>
-       <h3>{search.trim()?'No matching movies':'No downloaded movies yet'}</h3>
-       <p>{search.trim()?'Try another title or release year.':'Completed downloads will appear here with their poster, title, year, and TMDB rating.'}</p>
-       {#if !search.trim()}<button class="primary" onclick={()=>navigate('downloader')}><Plus size={17}/> Open Downloader</button>{/if}
+      <div class="cinema-blank">
+       <div class="cinema-blank-art" aria-hidden="true">
+        <div class="blank-film blank-film-back"></div>
+        <div class="blank-film blank-film-front"><FilmClap size={42} strokeWidth={1.1}/></div>
+       </div>
+       <div class="cinema-blank-copy">
+        <span class="library-kicker">THE SCREEN IS WAITING</span>
+        <h2>{search.trim()?'No films found.':'Every great collection starts with a film.'}</h2>
+        <p>{search.trim()?'Try a different movie title or release year.':'Your completed MP4 downloads will find their home here, with artwork, ratings and subtitles.'}</p>
+        {#if search.trim()}
+         <button class="cinema-empty-button" onclick={()=>{search='';libraryPage=1}}>Clear search <span aria-hidden="true">↗</span></button>
+        {:else}
+         <button class="cinema-empty-button" onclick={()=>navigate('downloader')}>Add a movie <span aria-hidden="true">↗</span></button>
+        {/if}
+       </div>
       </div>
      {/if}
-    </div>
+    </section>
    {:else if page==='settings'}
     <div class="dashboard-content settings-page">
      <div class="page-title">
@@ -328,8 +376,26 @@
      {#if movies.length}
       <div class="download-list">
       {#each movies as m (m.hash)}
-       <article class="download-item"><div class="download-art">{#if m.poster}<img src={poster(m.poster)} alt="" />{:else}<Film size={30}/>{/if}</div><div class="download-info"><div class="download-top"><h3>{m.title}</h3><span class:complete={m.status==='completed'} class="status-pill">{m.status}</span></div><p>{formatBytes(m.completed)} / {formatBytes(m.size)} {m.year?'· '+m.year:''}</p><div class="progress-track"><div class="progress-fill" style:width={percent(m)+'%'}></div></div><div class="download-meta"><span>{percent(m).toFixed(1)}% complete</span><span>{m.files.length} files</span></div></div>
-       <div class="download-actions">{#if m.status==='paused'}<button title="Resume" onclick={()=>action(m,'resume')}><Play size={18}/></button>{:else if m.status!=='completed'}<button title="Pause" onclick={()=>action(m,'pause')}><Pause size={18}/></button>{/if}<button title="Files" onclick={()=>selected=m}><ExternalLink size={18}/></button><button class="danger" title="Remove" onclick={()=>action(m,'remove')}><Trash2 size={18}/></button></div></article>
+       <article class="download-item" class:download-rejected={m.status==='rejected'}>
+        <div class="download-art">{#if m.poster}<img src={poster(m.poster)} alt="" />{:else}<Film size={30}/>{/if}</div>
+        <div class="download-info">
+         <div class="download-top"><h3>{m.title}</h3><span class:complete={m.status==='completed'} class:rejected={m.status==='rejected'} class="status-pill">{m.status==='metadata'?'Checking files':m.status}</span></div>
+         {#if m.status==='rejected'}
+          <p class="torrent-rejection"><AlertCircle size={15}/> {m.error||'Torrent rejected. Only MP4 movies and SRT subtitles are supported.'}</p>
+         {:else if m.status==='metadata'}
+          <p>Inspecting torrent files before downloading…</p>
+         {:else}
+          <p>{formatBytes(m.completed)} / {formatBytes(m.size)} {m.year?'· '+m.year:''}</p>
+          <div class="progress-track"><div class="progress-fill" style:width={percent(m)+'%'}></div></div>
+          <div class="download-meta"><span>{percent(m).toFixed(1)}% complete</span><span>{m.files.length} selected .mp4 / .srt files</span></div>
+         {/if}
+        </div>
+        <div class="download-actions">
+         {#if m.status==='paused'}<button title="Resume" onclick={()=>action(m,'resume')}><Play size={18}/></button>{:else if m.status==='downloading'}<button title="Pause" onclick={()=>action(m,'pause')}><Pause size={18}/></button>{/if}
+         {#if m.status!=='rejected'}<button title={m.status==='completed'?'Watch movie':'Movie files'} onclick={()=>openMovie(m)}><MonitorPlay size={18}/></button>{/if}
+         <button class="danger" title="Remove from queue" onclick={()=>action(m,'remove')}><Trash2 size={18}/></button>
+        </div>
+       </article>
       {/each}
       </div>
      {:else}
@@ -342,13 +408,70 @@
   <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>navigate('home')}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={20}/> Downloader {#if active>0}<span class="mobile-download-count" aria-label={active+' active downloads'}>{active}</span>{/if}</button><button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={20}/> Settings</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
  </div>
  {#if selected}
-  <div class="modal-backdrop" role="presentation" onclick={(event)=>{if(event.target===event.currentTarget)selected=null}}>
-   <section class="modal" role="dialog" aria-modal="true" aria-label="Movie details">
-    {#if selected.backdrop}<div class="modal-hero" style:background-image={'linear-gradient(0deg,#151e2b,transparent),url('+backdrop(selected.backdrop)+')'}></div>{/if}
-    <button class="modal-close" onclick={()=>selected=null} aria-label="Close dialog"><X size={20}/></button>
-    <div class="modal-content"><h2>{selected.title}</h2><p class="muted">{selected.year||'Movie'} · {formatBytes(selected.size)} · {selected.status}</p><div class="progress-track"><div class="progress-fill" style:width={percent(selected)+'%'}></div></div><p class="muted">{percent(selected).toFixed(1)}% downloaded</p><h3>Movie files</h3>
-    {#if selected.files.length}<div class="file-list">{#each selected.files as file}<a href={'/api/files/'+encodeURIComponent(selected.hash)+'?path='+encodeURIComponent(file.path)}><span class="file-name">{file.path}</span><span>{formatBytes(file.size)} <ArrowDownToLine size={15}/></span></a>{/each}</div>{:else}<p class="muted">Waiting for torrent metadata...</p>{/if}
+  <div class="modal-backdrop cinema-player-backdrop" role="presentation" onclick={(event)=>{if(event.target===event.currentTarget)closeMovie()}}>
+   <section class="cinema-player-modal" role="dialog" aria-modal="true" aria-label={'Watch '+selected.title}>
+    <div class="cinema-player-heading">
+     <div class="player-title-group">
+      <span class="library-kicker"><span class="kicker-mark"></span> NOW SHOWING</span>
+      <h2>{selected.title}</h2>
+      <p>{selected.year||'Film'} {#if selected.rating>0}<span>·</span> <Star size={13} fill="currentColor"/> {selected.rating.toFixed(1)} / 10{/if}</p>
+     </div>
+     <button class="cinema-player-close" onclick={closeMovie} aria-label="Close player"><X size={23}/></button>
     </div>
+    {#if selected.status==='completed' && selectedPlayback.video}
+     <div class="cinema-video-frame">
+      {#key selected.hash+selectedPlayback.video.path}
+       <video
+        bind:this={playerVideo}
+        class="cinema-video"
+        controls
+        autoplay
+        playsinline
+        preload="metadata"
+        poster={selected.backdrop?backdrop(selected.backdrop):selected.poster?poster(selected.poster):undefined}
+        onerror={()=>playbackError='Your browser cannot play this MP4 file. Try downloading it or use a browser that supports its video codec.'}
+        aria-label={'Playback of '+selected.title}
+       >
+        <source src={mediaURL(selected.hash,selectedPlayback.video.path)} type="video/mp4"/>
+        {#each selectedPlayback.subtitles as sub,i (sub.path)}
+         <track kind="subtitles" src={mediaURL(selected.hash,sub.path)} srclang={sub.language} label={sub.label} default={i===0}/>
+        {/each}
+        Your browser does not support HTML5 video.
+       </video>
+      {/key}
+     </div>
+     {#if playbackError}<p class="player-error"><AlertCircle size={16}/>{playbackError}</p>{/if}
+     <div class="cinema-player-toolbar">
+      <div class="cinema-player-hint"><span class="player-ready-dot"></span> READY TO WATCH <span class="player-toolbar-sep">/</span> {formatBytes(selectedPlayback.video.size)}
+       {#if selectedPlayback.subtitles.length}<span class="player-toolbar-sep">/</span> {selectedPlayback.subtitles.length} SUBTITLE {selectedPlayback.subtitles.length===1?'TRACK':'TRACKS'}{/if}
+      </div>
+      <div class="cinema-player-actions">
+       <a href={'/api/files/'+encodeURIComponent(selected.hash)+'?path='+encodeURIComponent(selectedPlayback.video.path)} title="Download MP4 video"><ArrowDownToLine size={16}/> Download MP4</a>
+       <button onclick={enterFullscreen} title="Enter fullscreen"><Maximize2 size={17}/> Fullscreen</button>
+      </div>
+     </div>
+    {:else}
+     <div class="cinema-player-unavailable">
+      <MonitorPlay size={40} strokeWidth={1.2}/>
+      <h3>{selected.status==='rejected'?'Torrent was rejected':'Your film is almost ready.'}</h3>
+      <p>{selected.error||'Playback becomes available once the selected MP4 and subtitle files finish downloading.'}</p>
+     </div>
+    {/if}
+    {#if selected.files.length}
+     <div class="cinema-player-files">
+      <div class="cinema-player-files-title"><span>FILES ON YOUR SERVER</span><span>{selected.files.length} FILES</span></div>
+      {#each selected.files as file (file.path)}
+       <div class="cinema-player-file">
+        <span class="file-name">{file.path}</span>
+        {#if file.completed!==undefined && file.completed<file.size}
+         <span class="muted">{formatBytes(file.completed)} / {formatBytes(file.size)}</span>
+        {:else}
+         <a href={'/api/files/'+encodeURIComponent(selected.hash)+'?path='+encodeURIComponent(file.path)} title={'Download '+file.path}><ArrowDownToLine size={15}/><span>{formatBytes(file.size)}</span></a>
+        {/if}
+       </div>
+      {/each}
+     </div>
+    {/if}
    </section>
   </div>
  {/if}

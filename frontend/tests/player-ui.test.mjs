@@ -65,7 +65,7 @@ test('CC toggle reveals subtitle shortcuts and only one text track is active',()
 
 test('MKV playback prepares a browser-compatible source and makes embedded CC tracks available',()=>{
  assert.match(component,/const prepareMKV=async\(movie:Movie\)/)
- assert.match(component,/playback\/\+'\+encodeURIComponent\(movie\.hash\)\+'\/prepare'/)
+ assert.ok(component.includes("call('playback/'+encodeURIComponent(movie.hash)+'/prepare'"))
  assert.match(component,/class="cinema-player-preparing"/)
  assert.match(component,/selectedIsMKV/)
  assert.match(component,/playbackVideoURL/)

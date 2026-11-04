@@ -10,6 +10,52 @@ VERSION="${CLOUDFLIX_VERSION:-latest}"
 
 die(){ printf '[cloudflix update] ERROR: %s\n' "$*" >&2; exit 1; }
 info(){ printf '[cloudflix update] %s\n' "$*"; }
+
+# Display the VPS's actual IP after setup (advisory only; never changes routing).
+valid_ipv4(){
+ local addr="$1" a b c d extra n
+ [[ "$addr" =~ ^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || return 1
+ IFS=. read -r a b c d extra <<< "$addr"
+ for n in "$a" "$b" "$c" "$d";do
+   (("${#n}" <= 3 && 10#$n <= 255)) || return 1
+ done
+}
+detect_vps_ip(){
+ local remote="" local_ip="" candidate=""
+ if command -v curl >/dev/null 2>&1;then
+   remote="$(curl -4fsS --connect-timeout 3 --max-time 6 https://api.ipify.org 2>/dev/null || true)"
+ elif command -v wget >/dev/null 2>&1;then
+   remote="$(wget -4 -q -T 6 -O - https://api.ipify.org 2>/dev/null || true)"
+ fi
+ if valid_ipv4 "$remote";then
+   printf '%s' "$remote"
+   return 0
+ fi
+ if command -v ip >/dev/null 2>&1;then
+   candidate="$(ip -4 route get 1.1.1.1 2>/dev/null || true)"
+   if [[ "$candidate" =~ [[:space:]]src[[:space:]]([0-9.]+) ]];then
+      local_ip="${BASH_REMATCH[1]}"
+   fi
+ fi
+ if ! valid_ipv4 "$local_ip" && command -v hostname >/dev/null 2>&1;then
+   local_ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+ fi
+ if valid_ipv4 "$local_ip";then
+   printf '%s' "$local_ip"
+   return 0
+ fi
+ return 1
+}
+print_access_url(){
+ local address=""
+ address="$(detect_vps_ip)" || address=""
+ if [[ -n "$address" ]];then
+   info "Open http://$address and sign in with your 6-digit PIN."
+ else
+   info "Could not detect the VPS IP; check 'ip -4 addr' or your VPS provider dashboard."
+ fi
+}
+
 [[ "$EUID" -eq 0 ]] || die "Run with sudo."
 [[ -f "$SERVICE" && ! -L "$SERVICE" && -x "$BIN" && ! -L "$BIN" ]] || die "Cloudflix is not installed in the expected locations."
 [[ -f "$CONFIG" && ! -L "$CONFIG" ]] || die "Cloudflix configuration file is missing or a symlink."
@@ -159,6 +205,6 @@ if [[ "$healthy" != 1 ]];then
  die "The health check failed; restored the previous version."
 fi
 info "Update completed. Movies, PIN and TMDB settings preserved."
-info "Access Cloudflix at http://YOUR_VPS_IP (default port 80)."
+print_access_url
 info "Allow inbound TCP 80 only from trusted IP addresses where possible."
 info "WARNING: HTTP does not encrypt PINs, session cookies or API tokens."

@@ -13,12 +13,12 @@ const download=component.slice(downloadStart,component.indexOf('   {/if}\n   <fo
 test('Home shows only completed movie cards with TMDB ratings, year and search',()=>{
  assert.match(component,/selectLibraryPage\(movies,search,libraryPage,10\)/)
  assert.match(home,/libraryView\.movies/)
- assert.match(home,/m\.rating\.toFixed\(1\)/)
- assert.match(home,/m\.year/)
+ assert.match(home,/movie\.rating\.toFixed\(1\)/)
+ assert.match(home,/movie\.year/)
  assert.match(home,/Search downloaded movies/)
  assert.doesNotMatch(home,/class="stat-grid"/)
  assert.doesNotMatch(home,/class="hero"/)
- assert.doesNotMatch(home,/YOUR PERSONAL MOVIE HUB/)
+ assert.doesNotMatch(home,/YOUR PERSONAL MOVIE HUB/)\n assert.match(home,/class=\"cinema-wall\"/)\n assert.match(home,/class=\"film-play-ring\"/)\n assert.match(home,/openMovie\(movie\)/)
 })
 
 test('Home has real next, previous, and numbered pages',()=>{

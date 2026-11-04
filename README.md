@@ -16,6 +16,12 @@ The installer detects your VPS IPv4 and prints the **actual `http://IP` address*
 
 > **Security:** Direct HTTP does not encrypt your PIN, session cookies or TMDB token. Avoid untrusted networks. A 6-digit PIN has limited entropy even with login rate limiting.
 
+## Watch & download
+
+Home is your movie poster wall (search and 10 movies per page). Select a completed movie to play its MP4 in the built-in player, including matching SRT subtitles and fullscreen support.
+
+Cloudflix inspects magnet metadata **before downloading content**. Magnets without an MP4 are rejected, and only `.mp4` and `.srt` files are selected. BitTorrent pieces may contain a few bytes from neighboring files at boundaries. Browser MP4 playback depends on the video's codec.
+
 ## Update
 
 ```bash

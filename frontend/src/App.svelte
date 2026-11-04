@@ -4,9 +4,11 @@
  import {findPlayback,mediaURL} from './lib/media.js'
  import {createVersionReloadMonitor} from './lib/version-reload.js'
  import {applySubtitleSelection} from './lib/subtitles.js'
- import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight, Maximize2, Clapperboard as FilmClap, MonitorPlay, RefreshCw, ArrowUpCircle } from '@lucide/svelte'
+ import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight, Maximize2, Clapperboard as FilmClap, MonitorPlay, RefreshCw, ArrowUpCircle, Files } from '@lucide/svelte'
 
  type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
+ type InspectedFile = {path:string,size:number,selected:boolean}
+ type FileInspection = {available:boolean,files:InspectedFile[],total:number,truncated?:boolean,rejected:boolean,reason:string,message?:string}
  let page = $state<'home'|'downloader'|'settings'>(typeof window!=='undefined'&&window.location.pathname==='/settings'?'settings':typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
  let auth = $state<'loading'|'setup'|'login'|'ready'>('loading')
  let pin = $state('')
@@ -19,6 +21,10 @@
  let libraryPage = $state(1)
  let queueFilter = $state<'all'|'active'|'completed'>('all')
  let selected = $state<Movie|null>(null)
+ let fileViewer = $state<{hash:string,title:string,status:string}|null>(null)
+ let inspectedFiles = $state<FileInspection|null>(null)
+ let fileViewerLoading = $state(false)
+ let fileViewerError = $state('')
  let playerVideo = $state<HTMLVideoElement|null>(null)
  let playbackError = $state('')
  let ccEnabled = $state(false)
@@ -108,6 +114,28 @@
    selectedSubtitle=0
    ccEnabled=false
    playbackError=''
+ }
+ const closeFileViewer=()=>{
+   fileViewer=null
+   inspectedFiles=null
+   fileViewerLoading=false
+   fileViewerError=''
+ }
+ const showFiles=async(movie:Movie)=>{
+   // Fetch only on demand: large torrent file lists never bloat live updates.
+   fileViewer={hash:movie.hash,title:movie.title,status:movie.status}
+   inspectedFiles=null
+   fileViewerLoading=true
+   fileViewerError=''
+   const hash=movie.hash
+   try{
+     const result=await call('torrents/'+encodeURIComponent(hash)+'/files')
+     if(fileViewer?.hash===hash)inspectedFiles=result as FileInspection
+   }catch(e){
+     if(fileViewer?.hash===hash)fileViewerError=(e as Error).message
+   }finally{
+     if(fileViewer?.hash===hash)fileViewerLoading=false
+   }
  }
  const enterFullscreen=async()=>{
    const video=playerVideo
@@ -261,7 +289,7 @@
  const action=async(m:Movie,verb:'pause'|'resume'|'remove')=>{
    if(verb==='remove'&&!confirm('Remove this torrent from Cloudflix? Downloaded files are retained.'))return
    error='';notice=''
-   try{await call('torrents/'+encodeURIComponent(m.hash)+'/'+verb,'POST',{});if(verb==='remove' && selected?.hash===m.hash)closeMovie();await refresh()}
+   try{await call('torrents/'+encodeURIComponent(m.hash)+'/'+verb,'POST',{});if(verb==='remove' && selected?.hash===m.hash)closeMovie();if(verb==='remove' && fileViewer?.hash===m.hash)closeFileViewer();await refresh()}
    catch(e){error=(e as Error).message}
  }
 </script>
@@ -544,6 +572,7 @@
            {#if m.status==='completed'}
             <button type="button" class="queue-watch-button" title={'Watch '+m.title} onclick={()=>openMovie(m)}><MonitorPlay size={17}/><span>Watch</span></button>
            {/if}
+           <button type="button" class="queue-files-button" title={'View torrent files for '+m.title} aria-label={'View files for '+m.title} onclick={()=>showFiles(m)}><Files size={17}/><span>Files</span></button>
            <button type="button" class="danger" title={'Remove '+m.title+' from queue'} aria-label={'Remove '+m.title} onclick={()=>action(m,'remove')}><Trash2 size={17}/></button>
           </div>
          </article>
@@ -564,6 +593,47 @@
   </main>
   <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>navigate('home')}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={20}/> Downloader {#if active>0}<span class="mobile-download-count" aria-label={active+' active downloads'}>{active}</span>{/if}</button><button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={20}/> Settings</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
  </div>
+ {#if fileViewer}
+  <div class="modal-backdrop file-inspector-backdrop" role="presentation">
+   <section class="file-inspector" role="dialog" aria-modal="true" aria-label={'Torrent files for '+fileViewer.title}>
+    <header class="file-inspector-header">
+     <div class="file-inspector-heading">
+      <h2>Files</h2>
+      <p title={fileViewer.title}>{fileViewer.title}</p>
+     </div>
+     <button type="button" class="file-inspector-close" aria-label="Close files" onclick={closeFileViewer}><X size={19}/></button>
+    </header>
+    {#if fileViewer.status==='rejected'}
+     <div class="file-inspector-alert" role="status"><AlertCircle size={17}/><span>{inspectedFiles?.reason||'Torrent rejected. No file content was downloaded.'}</span></div>
+    {/if}
+    {#if fileViewerLoading}
+     <div class="file-inspector-empty" role="status"><LoaderCircle class="spin" size={22}/><p>Inspecting torrent file list…</p></div>
+    {:else if fileViewerError}
+     <div class="file-inspector-empty" role="alert"><AlertCircle size={23}/><p>{fileViewerError}</p><button type="button" onclick={()=>fileViewer&&showFiles({hash:fileViewer.hash,title:fileViewer.title,status:fileViewer.status} as Movie)}>Retry</button></div>
+    {:else if inspectedFiles?.available}
+     <div class="file-inspector-summary">
+      <span>{inspectedFiles.total} {inspectedFiles.total===1?'file':'files'} found</span>
+      <span>{inspectedFiles.rejected?'No files downloaded':'Only MP4 and SRT files are selected for download'}</span>
+     </div>
+     <div class="file-inspector-list" role="list">
+      {#each inspectedFiles.files as file,i (i)}
+       <div class="file-inspector-item" role="listitem">
+        <span class="file-inspector-item-icon"><Files size={16}/></span>
+        <span class="file-inspector-filepath" title={file.path}>{file.path}</span>
+        <span class="file-inspector-filesize">{formatBytes(file.size)}</span>
+        <span class="file-inspector-file-status" class:selected={file.selected}>{file.selected?'Selected':inspectedFiles.rejected?'Not downloaded':'Skipped'}</span>
+       </div>
+      {/each}
+     </div>
+     {#if inspectedFiles.truncated}
+      <p class="file-inspector-note">Showing the first {inspectedFiles.files.length} files of {inspectedFiles.total}. The file list is limited for performance.</p>
+     {/if}
+    {:else}
+     <div class="file-inspector-empty"><Files size={24}/><p>{inspectedFiles?.message||'No file metadata available yet.'}</p></div>
+    {/if}
+   </section>
+  </div>
+ {/if}
  {#if selected}
   <div class="modal-backdrop cinema-player-backdrop" role="presentation">
    <div class="cinema-player-modal" role="dialog" aria-modal="true" aria-label={'Watch '+selected.title}>

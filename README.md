@@ -18,9 +18,9 @@ The installer detects your VPS IPv4 and prints the **actual `http://IP` address*
 
 ## Watch & download
 
-Home shows movie posters, release years and TMDB genres (search and 10 movies per page). Select a completed movie to play its MP4 in the built-in player, including matching SRT subtitles and fullscreen support.
+Home shows movie posters, release years and TMDB genres (search and 10 movies per page). Play completed **MP4 or MKV** movies in the theater with CC and fullscreen. MKV files are prepared as browser-compatible MP4 when opened; text subtitles embedded in MKV (SRT/ASS) are available through CC. Image-based subtitles such as PGS are not currently supported.
 
-Cloudflix inspects magnet metadata **before downloading content**. Magnets without an MP4 are rejected, and only `.mp4` and `.srt` files are selected. Use **Files** in the Downloader queue to inspect included filenames, including rejected torrents. Rejected file listings are temporary (memory-only). After a restart, **Files** can fetch the torrent metadata again from peers without downloading its payload. Deleting a rejected torrent clears its record and cached file list. BitTorrent pieces may contain a few bytes from neighboring files at boundaries. Browser MP4 playback depends on the video's codec.
+Cloudflix inspects magnet metadata **before downloading content**. Magnets without an MP4 or MKV are rejected, and only `.mp4`, `.mkv` and `.srt` files are selected. Use **Files** in the Downloader queue to inspect included filenames, including rejected torrents. Rejected file listings are temporary (memory-only). After a restart, **Files** can fetch the torrent metadata again from peers without downloading its payload. Deleting a rejected torrent clears its record and cached file list. BitTorrent pieces may contain a few bytes from neighboring files at boundaries. The Downloader has a **Copy magnet** icon next to Delete. MKV playback needs FFmpeg (`ffmpeg` and `ffprobe`) on the VPS; the terminal installer/updater attempts to install it on Ubuntu/Debian. MKV preparation can take time and creates converted files in `/var/lib/cloudflix/playback-cache`.
 
 ## Update
 

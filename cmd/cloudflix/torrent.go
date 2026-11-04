@@ -37,6 +37,9 @@ type entry struct {
  validated bool
  rejectionReason string
  fileManifest *torrentFileManifest // transient torrent metadata; never stored in SQLite
+ inspectingFiles bool
+ inspectedFilesOnce bool
+ fileInspectionError string
 }
 type engine struct{
  mu sync.Mutex
@@ -45,6 +48,7 @@ type engine struct{
  downloads string
  tmdbKey string
  entries map[string]*entry
+ activeFileInspections int
 }
 // Older Cloudflix SQLite catalogs did not store TMDB ratings.
 // Add the column in place without removing any existing movies or downloads.
@@ -370,6 +374,8 @@ func (e *engine) action(hash,action string)error{
   // remove from the shared downloads directory. Do not remove files by
   // untrusted metadata paths: they may overlap other valid torrents.
   item.fileManifest=nil
+  item.fileInspectionError=""
+  item.inspectingFiles=false
   delete(e.entries,hash)
  default:return errors.New("unknown action")
  }

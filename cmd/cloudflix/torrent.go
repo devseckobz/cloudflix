@@ -100,14 +100,19 @@ func allowedMediaPath(path string)bool{
  local:=filepath.FromSlash(path)
  if !filepath.IsLocal(local) || filepath.ToSlash(local)!=path{return false}
  ext:=strings.ToLower(filepath.Ext(path))
- return ext==".mp4" || ext==".srt"
+ return ext==".mp4" || ext==".mkv" || ext==".srt"
+}
+
+func isMovieVideo(name string)bool{
+ ext:=strings.ToLower(filepath.Ext(name))
+ return ext==".mp4" || ext==".mkv"
 }
 
 func selectedMediaFiles(paths []string)(selected []string,hasVideo bool){
  for _,path:=range paths{
   if !allowedMediaPath(path){continue}
   selected=append(selected,path)
-  if strings.EqualFold(filepath.Ext(path),".mp4"){hasVideo=true}
+  if isMovieVideo(path){hasVideo=true}
  }
  return
 }
@@ -131,7 +136,7 @@ func selectedFilesVerified(tt *torrent.Torrent)bool{
  for _,file:=range tt.Files(){
   if !allowedMediaPath(filepath.ToSlash(file.Path())) || file.Length()<=0{continue}
   if !verifiedFile(file){return false}
-  if strings.EqualFold(filepath.Ext(file.Path()),".mp4"){foundVideo=true}
+  if isMovieVideo(file.Path()){foundVideo=true}
  }
  return foundVideo
 }
@@ -294,7 +299,7 @@ func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  return e,nil
 }
 func (e *engine) close(){e.client.Close()}
-// Request metadata first and select only MP4 and SRT payload files.
+// Request metadata first and select only MP4, MKV and SRT payload files.
 func (e *engine) startWhenReady(item *entry){
  go func(){
   tt:=item.torrent
@@ -317,7 +322,7 @@ func (e *engine) startWhenReady(item *entry){
    if len(rawFiles)<maxManifestFiles{
     rawFiles=append(rawFiles,manifestFile{Path:path,Size:size})
    }
-   if allowedMediaPath(path) && size>0 && strings.EqualFold(filepath.Ext(path),".mp4"){hasVideo=true}
+   if allowedMediaPath(path) && size>0 && isMovieVideo(path){hasVideo=true}
   }
   // Preserve the actual torrent filename even if the magnet is rejected.
   if item.title=="" && tt.Name()!=""{
@@ -333,7 +338,7 @@ func (e *engine) startWhenReady(item *entry){
   // is clicked. Rejected torrents never request payload pieces.
   item.fileManifest=&manifest
   if !hasVideo{
-   e.rejectTorrentLocked(item,"Rejected: torrent contains no .mp4 movie. Only .mp4 and .srt files are permitted.")
+   e.rejectTorrentLocked(item,"Rejected: torrent contains no .mp4 or .mkv movie. Only .mp4, .mkv and .srt files are permitted.")
    return
   }
   // Never call DownloadAll. Pieces can straddle a selected and skipped file,

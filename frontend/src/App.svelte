@@ -3,7 +3,7 @@
  import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink } from '@lucide/svelte'
 
  type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,size:number,completed:number,progress:number,status:string,files:{path:string,size:number}[]}
- let page = $state<'home'|'downloader'>('home')
+ let page = $state<'home'|'downloader'>(typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
  let auth = $state<'loading'|'setup'|'login'|'ready'>('loading')
  let password = $state('')
  let movies = $state<Movie[]>([])
@@ -17,6 +17,11 @@
  let connected = $state(false)
  let version = $state('v0.1.0-alpha')
  let live:EventSource|null = null
+ const navigate=(destination:'home'|'downloader')=>{
+   page=destination
+   const path=destination==='home'?'/':'/downloader'
+   if(window.location.pathname!==path)window.history.pushState({},'',path)
+ }
  const formatBytes=(v:number):string=>{
    if (!v) return '0 B'
    const units=['B','KB','GB','GB','TB']
@@ -52,7 +57,12 @@
      if(auth==='ready'){await refresh();connect()}
    }catch{error='Unable to connect to Cloudflix server';auth='login'}
  }
- onMount(()=>{checkAuth();return ()=>{live?.close()}})
+ onMount(()=>{
+   const handleBack=()=>{page=window.location.pathname==='/downloader'?'downloader':'home'}
+   window.addEventListener('popstate',handleBack)
+   checkAuth()
+   return ()=>{live?.close();window.removeEventListener('popstate',handleBack)}
+ })
  const authenticate=async()=>{
    error=''
    if(auth==='setup'&&password.length<12){error='Choose a password of at least 12 characters';return}
@@ -68,7 +78,7 @@
    error='';notice='';submitting=true
    try{
      await call('magnets','POST',{magnet:magnet.trim()})
-     magnet='';notice='Magnet added to your download queue';page='downloader';await refresh()
+     magnet='';notice='Magnet added to your download queue';navigate('downloader');await refresh()
    }catch(e){error=(e as Error).message}
    finally{submitting=false}
  }
@@ -104,17 +114,17 @@
 {:else}
  <div class="app-shell">
   <aside class="sidebar">
-   <button class="brand brand-button" onclick={()=>page='home'} aria-label="Cloudflix homepage"><span class="brand-icon"><Film size={25}/></span><strong>cloud<span>flix</span></strong></button>
+   <button class="brand brand-button" onclick={()=>navigate('home')} aria-label="Cloudflix homepage"><span class="brand-icon"><Film size={25}/></span><strong>cloud<span>flix</span></strong></button>
    <div class="side-label">MENU</div>
    <nav aria-label="Main navigation">
-    <button class:active={page==='home'} onclick={()=>page='home'}><House size={19}/> Home</button>
-    <button class:active={page==='downloader'} onclick={()=>page='downloader'}><Download size={19}/> Downloader {#if active}<span class="nav-count">{active}</span>{/if}</button>
+    <button class:active={page==='home'} onclick={()=>navigate('home')}><House size={19}/> Home</button>
+    <button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={19}/> Downloader {#if active}<span class="nav-count">{active}</span>{/if}</button>
    </nav>
    <div class="side-label library-label">YOUR LIBRARY</div>
    <nav>
-    <button onclick={()=>{page='home';filter='all'}}><Clapperboard size={18}/> All movies <span class="nav-count">{movies.length}</span></button>
-    <button onclick={()=>{page='home';filter='complete'}}><CheckCircle2 size={18}/> Completed</button>
-    <button onclick={()=>{page='home';filter='active'}}><LoaderCircle size={18}/> In progress</button>
+    <button onclick={()=>{navigate('home');filter='all'}}><Clapperboard size={18}/> All movies <span class="nav-count">{movies.length}</span></button>
+    <button onclick={()=>{navigate('home');filter='complete'}}><CheckCircle2 size={18}/> Completed</button>
+    <button onclick={()=>{navigate('home');filter='active'}}><LoaderCircle size={18}/> In progress</button>
    </nav>
    <div class="sidebar-bottom">
     <div class="server-status"><span class:online={connected} class="status-dot"></span><span>{connected?'Server connected':'Reconnecting...'}</span></div>
@@ -133,9 +143,9 @@
     <section class="hero" style:background-image={featured?.backdrop? 'linear-gradient(90deg,#111925 0%,rgba(17,25,37,.92) 32%,rgba(17,25,37,.28) 100%),url('+backdrop(featured.backdrop)+')':''}>
      <div class="eyebrow"><span class="red-dot"></span> YOUR PERSONAL MOVIE HUB</div>
      {#if featured}
-      <div class="hero-copy"><h1>{featured.title}</h1><p>{featured.year||'Movie'} · {featured.status==='completed'?'Ready to download':'In your library'}</p><div class="hero-actions"><button class="primary" onclick={()=>selected=featured}><Play size={18} fill="currentColor"/> View details</button><button class="outline" onclick={()=>page='downloader'}><Download size={18}/> Downloads</button></div></div>
+      <div class="hero-copy"><h1>{featured.title}</h1><p>{featured.year||'Movie'} · {featured.status==='completed'?'Ready to download':'In your library'}</p><div class="hero-actions"><button class="primary" onclick={()=>selected=featured}><Play size={18} fill="currentColor"/> View details</button><button class="outline" onclick={()=>navigate('downloader')}><Download size={18}/> Downloads</button></div></div>
      {:else}
-      <div class="hero-copy"><h1>All your movies.<br/><em>One beautiful place.</em></h1><p>Add a magnet link to get started. Cloudflix organizes your downloads and finds their movie artwork automatically.</p><div class="hero-actions"><button class="primary" onclick={()=>page='downloader'}><Plus size={18}/> Add your first movie</button></div></div>
+      <div class="hero-copy"><h1>All your movies.<br/><em>One beautiful place.</em></h1><p>Add a magnet link to get started. Cloudflix organizes your downloads and finds their movie artwork automatically.</p><div class="hero-actions"><button class="primary" onclick={()=>navigate('downloader')}><Plus size={18}/> Add your first movie</button></div></div>
      {/if}
      <div class="hero-vignette"></div>
     </section>
@@ -154,7 +164,7 @@
        <h3>{m.title}</h3><p>{m.year||'Unknown year'} · {formatBytes(m.size)}</p>
       </button>{/each}</div>
      {:else}
-      <div class="empty"><div class="empty-icon"><Film size={34}/></div><h3>{movies.length?'No matching movies':'Your collection starts here'}</h3><p>{movies.length?'Try a different search or filter.':'Movies you download will appear here with posters and artwork.'}</p><button class="primary" onclick={()=>{page='downloader';filter='all'}}><Plus size={17}/> Open downloader</button></div>
+      <div class="empty"><div class="empty-icon"><Film size={34}/></div><h3>{movies.length?'No matching movies':'Your collection starts here'}</h3><p>{movies.length?'Try a different search or filter.':'Movies you download will appear here with posters and artwork.'}</p><button class="primary" onclick={()=>{navigate('downloader');filter='all'}}><Plus size={17}/> Open downloader</button></div>
      {/if}
     </div>
    {:else}
@@ -181,7 +191,7 @@
    {/if}
    <footer class="footer"><span>© Cloudflix · Self-hosted with ❤️</span><span>Go + Svelte · Movie data from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer">TMDB</a>; not endorsed or certified by TMDB.</span></footer>
   </main>
-  <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>page='home'}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>page='downloader'}><Download size={20}/> Downloader</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
+  <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>navigate('home')}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={20}/> Downloader</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
  </div>
  {#if selected}
   <div class="modal-backdrop" role="presentation" onclick={(event)=>{if(event.target===event.currentTarget)selected=null}}>

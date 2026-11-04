@@ -6,7 +6,7 @@ REPO="devseckobz/cloudflix"
 BIN="/usr/local/bin/cloudflix"
 SERVICE="/etc/systemd/system/cloudflix.service"
 CONFIG="/etc/cloudflix/cloudflix.env"
-VERSION="\${CLOUDFLIX_VERSION:-latest}"
+VERSION="${CLOUDFLIX_VERSION:-latest}"
 
 die(){ printf '[cloudflix update] ERROR: %s\n' "$*" >&2; exit 1; }
 info(){ printf '[cloudflix update] %s\n' "$*"; }
@@ -41,7 +41,7 @@ verify_port80(){
      continue
    fi
    while IFS= read -r pid;do
-     [[ "\${pid#pid=}" == "$mainpid" ]] || foreign=1
+     [[ "${pid#pid=}" == "$mainpid" ]] || foreign=1
    done <<< "$allpids"
  done <<< "$listeners"
  if [[ "$foreign" == 1 ]];then
@@ -130,12 +130,12 @@ fi
 # A custom port is supported but must be numeric for a reliable health check.
 listen="$(sed -n 's/^CLOUDFLIX_LISTEN=//p' "$CONFIG" | tail -n 1)"
 [[ -n "$listen" ]] || listen="0.0.0.0:80"
-health_port="\${listen##*:}"
+health_port="${listen##*:}"
 [[ "$health_port" =~ ^[0-9]{1,5}$ ]] && ((health_port>0 && health_port<=65535)) || { rollback;die "Invalid configured listen port."; }
 health_host=127.0.0.1
 case "$listen" in
  0.0.0.0:*|127.0.0.1:*) ;;
- *:*) health_host="\${listen%:*}";;
+ *:*) health_host="${listen%:*}";;
 esac
 
 install -m 0755 "$work/cloudflix.candidate" "$BIN.new"

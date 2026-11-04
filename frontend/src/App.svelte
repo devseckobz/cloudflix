@@ -55,7 +55,7 @@
    finally{settingsLoading=false}
  }
  const saveTMDB=async()=>{
-   if(!tmdbToken.trim()){error='Paste a TMDB API Read Access Token first';return}
+   if(!tmdbToken.trim()){error='Paste a TMDB API key or Read Access Token first';return}
    settingsBusy=true;error='';notice=''
    try{
      const result=await call('settings','PUT',{tmdbApiKey:tmdbToken.trim()})
@@ -231,14 +231,14 @@
        <span class:configured={tmdbConfigured} class="integration-status">{settingsLoading?'Checking...':tmdbConfigured?'● Connected':'○ Not configured'}</span>
       </div>
       <form class="settings-form" onsubmit={(event)=>{event.preventDefault();saveTMDB()}}>
-       <label for="tmdb-token">TMDB API Read Access Token</label>
-       <input id="tmdb-token" type="password" bind:value={tmdbToken} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="2048" placeholder={tmdbConfigured?'Enter a new token to replace the saved one':'Paste your TMDB API Read Access Token'} />
+       <label for="tmdb-token">TMDB API key or Read Access Token</label>
+       <input id="tmdb-token" type="password" bind:value={tmdbToken} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="2048" placeholder={tmdbConfigured?'Enter a new token to replace the saved one':'Paste your TMDB API key or Read Access Token'} />
        <p class="settings-hint">Your token is checked directly with TMDB and stored privately on this VPS. For security, the saved token is never displayed.</p>
        <div class="settings-actions">
         <button type="submit" class="primary" disabled={settingsBusy||!tmdbToken.trim()}>{#if settingsBusy}<LoaderCircle size={17}/>{:else}<CheckCircle2 size={17}/>{/if} Save & verify token</button>
         {#if tmdbConfigured}<button type="button" class="settings-remove" disabled={settingsBusy} onclick={clearTMDB}><Trash2 size={17}/> Remove token</button>{/if}
        </div>
-       <p class="settings-help">Get your token from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">TMDB account settings</a>. Use the <strong>API Read Access Token</strong>, not the API key.</p>
+       <p class="settings-help">Get your token from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">TMDB account settings</a>. Both the <strong>32-character API key</strong> and the <strong>API Read Access Token</strong> are supported.</p>
       </form>
      </section>
      <section class="settings-panel">

@@ -312,13 +312,6 @@
    <header class="topbar">
     <div class="mobile-brand brand"><span class="brand-icon"><Film size={19}/></span><strong>cloud<span>flix</span></strong></div>
     {#if page==='home'}
-     <nav class="top-library-pagination" aria-label="Movie pages">
-      <button type="button" aria-label="Previous page" disabled={libraryView.page===1} onclick={()=>libraryPage=libraryView.page-1}><ChevronLeft size={16}/></button>
-      {#each libraryView.pages as number}
-       <button type="button" class:active={libraryView.page===number} aria-label={'Page '+number} aria-current={libraryView.page===number?'page':undefined} onclick={()=>libraryPage=number}>{number}</button>
-      {/each}
-      <button type="button" aria-label="Next page" disabled={libraryView.page===libraryView.totalPages} onclick={()=>libraryPage=libraryView.page+1}><ChevronRight size={16}/></button>
-     </nav>
      <label class="nav-movie-search">
       <Search size={18}/>
       <input value={search} oninput={(event)=>{search=event.currentTarget.value;libraryPage=1}} placeholder="Search movies" aria-label="Search downloaded movies"/>
@@ -354,7 +347,16 @@
         </button>
        {/each}
       </div>
-      <p class="library-results-count">Showing {libraryView.from}–{libraryView.to} of {libraryView.total}</p>
+      <div class="library-pagination-footer">
+       <nav class="library-bottom-pagination" aria-label="Movie pages">
+        <button type="button" aria-label="Previous page" disabled={libraryView.page===1} onclick={()=>libraryPage=libraryView.page-1}><ChevronLeft size={16}/></button>
+        {#each libraryView.pages as number}
+         <button type="button" class:active={libraryView.page===number} aria-label={'Page '+number} aria-current={libraryView.page===number?'page':undefined} onclick={()=>libraryPage=number}>{number}</button>
+        {/each}
+        <button type="button" aria-label="Next page" disabled={libraryView.page===libraryView.totalPages} onclick={()=>libraryPage=libraryView.page+1}><ChevronRight size={16}/></button>
+       </nav>
+       <p class="library-results-count">Showing {libraryView.from}–{libraryView.to} of {libraryView.total}</p>
+      </div>
      {:else}
       <div class="movie-library-empty">
        {#if search.trim()}

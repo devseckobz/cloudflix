@@ -1,0 +1,13 @@
+node_modules/
+frontend/dist/
+static/dist/*
+!static/dist/.gitkeep
+*.db
+*.db-shm
+*.db-wal
+.env
+.idea/
+.vscode/
+dist/
+tmp/
+.DS_Store

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'New release tag (for example v0.1.14)'
+        description: 'New release tag (for example v0.1.15)'
         required: true
 permissions:
   contents: write
@@ -38,7 +38,7 @@ jobs:
           elif [[ "$REF_TYPE" == "tag" ]];then
             TAG="$REF_NAME"
           else
-            TAG="v0.1.13"
+            TAG="v0.1.14"
           fi
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][a-zA-Z0-9.]+)?$ ]]
           echo "TAG=$TAG" >> "$GITHUB_ENV"

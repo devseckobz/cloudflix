@@ -57,6 +57,7 @@ type ffStream struct{
  Index int `json:"index"`
  CodecType string `json:"codec_type"`
  CodecName string `json:"codec_name"`
+ PixelFormat string `json:"pix_fmt"`
  Tags struct{
   Language string `json:"language"`
   Title string `json:"title"`
@@ -257,7 +258,7 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
  temporary:=filepath.Join(dir,key+".part.mp4")
  defer os.Remove(temporary)
  probeBytes,err:=commandFromMKV(ctx,"ffprobe",source,
-  "-v","error","-show_entries","stream=index,codec_type,codec_name:stream_tags=language,title",
+  "-v","error","-show_entries","stream=index,codec_type,codec_name,pix_fmt:stream_tags=language,title",
   "-of","json","-i","/proc/self/fd/3")
  if err!=nil{
   a.updateMKVJob(job,"error","Unable to read the MKV container. Check the file's format.")
@@ -274,13 +275,32 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
   a.updateMKVJob(job,"error","This MKV contains no video stream.")
   return
  }
- // Fixed arguments only; users cannot inject shell commands or output paths.
- // H.264/AAC offers broad browser support, including HEVC MKV sources.
+ // Fixed arguments only; users cannot inject shell commands or paths.
+ // Compatible H.264/AAC streams can be remuxed quickly without re-encoding.
+ // HEVC, 10-bit H.264, and other codecs are converted to H.264/AAC.
+ copyVideo:=false
+ copyAudio:=false
+ sawVideo:=false
+ sawAudio:=false
+ for _,stream:=range parsed.Streams{
+  if stream.CodecType=="video" && !sawVideo{
+   sawVideo=true
+   copyVideo=strings.EqualFold(stream.CodecName,"h264") && strings.EqualFold(stream.PixelFormat,"yuv420p")
+  }
+  if stream.CodecType=="audio" && !sawAudio{
+   sawAudio=true
+   copyAudio=strings.EqualFold(stream.CodecName,"aac")
+  }
+ }
  args:=[]string{"-nostdin","-hide_banner","-loglevel","error","-y",
-  "-i","/proc/self/fd/3","-map","0:v:0","-map","0:a:0?",
-  "-sn","-dn","-c:v","libx264","-preset","veryfast","-crf","24",
-  "-pix_fmt","yuv420p","-threads","2","-c:a","aac","-b:a","160k",
-  "-movflags","+faststart","-fs",strconv.FormatInt(maxConvertedMP4,10),temporary}
+  "-i","/proc/self/fd/3","-map","0:v:0","-map","0:a:0?","-sn","-dn"}
+ if copyVideo{args=append(args,"-c:v","copy")}else{
+  args=append(args,"-c:v","libx264","-preset","veryfast","-crf","24","-pix_fmt","yuv420p","-threads","2")
+ }
+ if copyAudio{args=append(args,"-c:a","copy")}else{
+  args=append(args,"-c:a","aac","-b:a","160k")
+ }
+ args=append(args,"-movflags","+faststart","-fs",strconv.FormatInt(maxConvertedMP4,10),temporary)
  if _,err:=commandFromMKV(ctx,"ffmpeg",source,args...);err!=nil{
   a.updateMKVJob(job,"error","MKV conversion failed. Check available disk space and server FFmpeg support.")
   return

@@ -28,14 +28,16 @@ guard_directory(){
   [[ -d "$dir" && ! -L "$dir" ]] || die "Unexpected directory type at $dir. Review manually."
   resolved="$(realpath -e -- "$dir")" || die "Unable to resolve $dir."
   [[ "$resolved" == "$dir" ]] || die "Refusing to delete a redirected directory: $dir -> $resolved"
-  if [[ "$dir" == "$DATA_DIR" ]];then
-    command -v findmnt >/dev/null 2>&1 || die "findmnt is required to check download-storage mounts."
-    while IFS= read -r mount;do
-      if [[ "$mount" == "$dir" || "$mount" == "$dir/"* ]];then
-        die "Mount found inside Cloudflix data ($mount). Unmount it before uninstalling."
-      fi
-    done < <(findmnt -rn -o TARGET)
-  fi
+  # Protect both configuration and downloaded data from mounted external
+  # filesystems. Command substitution preserves findmnt's failure status.
+  command -v findmnt >/dev/null 2>&1 || die "findmnt is required for a safe uninstall."
+  local mounts
+  mounts="$(findmnt -rn -o TARGET)" || die "Cannot inspect mounted filesystems."
+  while IFS= read -r mount;do
+    if [[ "$mount" == "$dir" || "$mount" == "$dir/"* ]];then
+      die "Mount found inside Cloudflix path ($mount). Unmount it before uninstalling."
+    fi
+  done <<< "$mounts"
 }
 guard_directory "$CONFIG_DIR"
 if [[ "$KEEP_DATA" == "0" ]];then guard_directory "$DATA_DIR";fi

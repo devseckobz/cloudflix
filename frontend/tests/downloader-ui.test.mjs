@@ -31,11 +31,14 @@ test('Completed downloads show a watch action, not an oversized progress bar',()
  assert.match(downloader,/class="queue-progress"/)
 })
 
-test('Movie page buttons are in header and results are centered without divider',()=>{
- assert.match(header,/class="top-library-pagination"/)
- assert.match(header,/class:active=\{libraryView\.page===number\}/)
+test('Movie page buttons sit above the centered results count',()=>{
+ assert.doesNotMatch(header,/top-library-pagination/)
+ assert.match(home,/class="library-pagination-footer"/)
+ assert.match(home,/class="library-bottom-pagination"/)
+ assert.match(home,/class:active=\{libraryView\.page===number\}/)
  assert.match(home,/class="library-results-count"/)
  assert.match(css,/\.library-results-count\s*\{[\s\S]*?text-align:center;[\s\S]*?border:0;/)
+ assert.ok(home.indexOf('class="library-bottom-pagination"')<home.indexOf('class="library-results-count"'))
  assert.doesNotMatch(home,/class="movie-library-pagination"/)
 })
 

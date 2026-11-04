@@ -4,6 +4,7 @@ umask 027
 REPO="devseckobz/cloudflix"
 BIN="/usr/local/bin/cloudflix"
 SERVICE="/etc/systemd/system/cloudflix.service"
+CONFIG="/etc/cloudflix/cloudflix.env"
 VERSION="${CLOUDFLIX_VERSION:-latest}"
 die(){ printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 info(){ printf '[cloudflix update] %s\n' "$*"; }
@@ -53,12 +54,14 @@ elif [[ "$pin_status" != "0" ]];then
   die "Cannot inspect existing Cloudflix access settings (PIN status code $pin_status). Update aborted."
 fi
 install -m 0755 "$BIN" "$work/cloudflix.previous"
-install -m 0755 "$work/cloudflix.candidate" "$BIN.new"
+config_backup=""
+if [[ -f "$CONFIG" ]] && grep -Eq '^CLOUDFLIX_LISTEN=127[.]0[.]0[.]1:3000
 mv -f "$BIN.new" "$BIN"
 info "Restarting service"
 if ! systemctl restart cloudflix;then
  info "Restart failed, restoring previous binary"
  install -m 0755 "$work/cloudflix.previous" "$BIN"
+ if [[ -n "$config_backup" ]];then cp -p -- "$config_backup" "$CONFIG";fi
  systemctl restart cloudflix || true
  die "Update rolled back"
 fi
@@ -74,6 +77,44 @@ done
 if [[ "$healthy" != "1" ]];then
  info "Health check failed, restoring previous binary"
  install -m 0755 "$work/cloudflix.previous" "$BIN"
+ if [[ -n "$config_backup" ]];then cp -p -- "$config_backup" "$CONFIG";fi
+ systemctl restart cloudflix || true
+ die "Update rolled back"
+fi
+info "Update successful. Data and PIN preserved."
+info "Open http://YOUR_VPS_IP:3000 and sign in with your 6-digit PIN."
+info "Allow TCP port 3000 in your VPS firewall/provider rules for trusted IPs."
+info "WARNING: Plain HTTP is unencrypted; avoid untrusted networks."
+ "$CONFIG";then
+  [[ ! -L "$CONFIG" ]] || die "Refusing to modify symlinked configuration"
+  config_backup="$work/cloudflix.env.previous"
+  cp -p -- "$CONFIG" "$config_backup"
+  sed -i 's/^CLOUDFLIX_LISTEN=127[.]0[.]0[.]1:3000$/CLOUDFLIX_LISTEN=0.0.0.0:3000/' "$CONFIG"
+  info "Enabled direct VPS IP access on port 3000."
+fi
+install -m 0755 "$work/cloudflix.candidate" "$BIN.new"
+mv -f "$BIN.new" "$BIN"
+info "Restarting service"
+if ! systemctl restart cloudflix;then
+ info "Restart failed, restoring previous binary"
+ install -m 0755 "$work/cloudflix.previous" "$BIN"
+ if [[ -n "$config_backup" ]];then cp -p -- "$config_backup" "$CONFIG";fi
+ systemctl restart cloudflix || true
+ die "Update rolled back"
+fi
+healthy=0
+for i in $(seq 1 20);do
+ if command -v curl >/dev/null;then
+  if curl -fsS --max-time 2 http://127.0.0.1:3000/api/health >/dev/null 2>&1;then healthy=1;break;fi
+ else
+  if wget -q --timeout=2 -O /dev/null http://127.0.0.1:3000/api/health;then healthy=1;break;fi
+ fi
+ sleep 1
+done
+if [[ "$healthy" != "1" ]];then
+ info "Health check failed, restoring previous binary"
+ install -m 0755 "$work/cloudflix.previous" "$BIN"
+ if [[ -n "$config_backup" ]];then cp -p -- "$config_backup" "$CONFIG";fi
  systemctl restart cloudflix || true
  die "Update rolled back"
 fi

@@ -214,6 +214,20 @@ if [[ "$healthy" != 1 ]];then
  die "The health check failed; restored the previous version."
 fi
 info "Update completed. Movies, PIN and TMDB settings preserved."
+# MKV theater playback requires FFmpeg/ffprobe. New installs and interactive
+# updates install the distro package on Ubuntu/Debian. Browser updates never
+# modify system packages without a terminal.
+if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1;then
+ if command -v apt-get >/dev/null 2>&1 && [[ "${CLOUDFLIX_NONINTERACTIVE:-0}" != "1" ]];then
+  info "Installing FFmpeg for MKV playback..."
+  if ! (export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq --no-install-recommends ffmpeg);then
+   info "WARNING: FFmpeg could not be installed. MKV playback will require: sudo apt-get install ffmpeg"
+  fi
+ else
+  info "Note: MKV playback needs ffmpeg and ffprobe installed on your VPS."
+ fi
+fi
+
 # Use only root-owned helper scripts for browser-triggered updates.
 # A setup failure must not roll back an otherwise healthy application.
 if [[ "${CLOUDFLIX_NONINTERACTIVE:-0}" != "1" ]];then

@@ -44,7 +44,7 @@ func convertSRTToVTT(raw []byte) []byte {
 // unable to escape the downloads directory through traversal or symlinks.
 func serveMediaFile(w http.ResponseWriter, r *http.Request, root *os.Root, name string) {
  local:=filepath.FromSlash(name)
- if name=="" || !filepath.IsLocal(local) || filepath.ToSlash(local)!=name {
+ if !allowedMediaPath(name) || !filepath.IsLocal(local) || filepath.ToSlash(local)!=name {
   fail(w,http.StatusNotFound,"media file not found")
   return
  }

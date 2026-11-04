@@ -542,3 +542,19 @@ html{color-scheme:dark;scrollbar-color:#3d4c60 #0b1119;scrollbar-width:thin}
  .file-inspector-note{padding:12px 15px}
  .download-page .queue-actions .queue-files-button{padding:7px 9px}
 }
+
+/* Primary TMDB genre next to release year, matching the Cloudflix coral accent. */
+.movie-library-year-genre,.queue-year-genre,.cinema-movie-year-genre{
+ color:#ff6260;
+ font-weight:600;
+}
+.movie-library-year-genre{
+ display:inline-block;
+ min-width:0;
+ white-space:nowrap;
+ overflow:hidden;
+ text-overflow:ellipsis;
+}
+.movie-library-genre-sep{color:#ff6260}
+.queue-year-genre{font-size:11px}
+.cinema-movie-year-genre{font-size:12px}

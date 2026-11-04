@@ -1,8 +1,9 @@
 <script lang="ts">
  import { onMount } from 'svelte'
- import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink } from '@lucide/svelte'
+ import { selectLibraryPage, countDownloading } from './lib/library.js'
+ import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight } from '@lucide/svelte'
 
- type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,size:number,completed:number,progress:number,status:string,files:{path:string,size:number}[]}
+ type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,files:{path:string,size:number}[]}
  let page = $state<'home'|'downloader'|'settings'>(typeof window!=='undefined'&&window.location.pathname==='/settings'?'settings':typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
  let auth = $state<'loading'|'setup'|'login'|'ready'>('loading')
  let pin = $state('')
@@ -12,7 +13,7 @@
  let magnet = $state('')
  let submitting = $state(false)
  let search = $state('')
- let filter = $state<'all'|'active'|'complete'>('all')
+ let libraryPage = $state(1)
  let selected = $state<Movie|null>(null)
  let connected = $state(false)
  let version = $state('v0.1.0-alpha')
@@ -21,8 +22,9 @@
  let tmdbToken = $state('')
  let settingsBusy = $state(false)
  let settingsLoading = $state(false)
+ let tmdbChecked = $state(false)
  const navigate=(destination:'home'|'downloader'|'settings')=>{
-   if(destination==='settings')void loadSettings()
+   if(destination==='settings'||destination==='downloader')void loadSettings()
    page=destination
    const path=destination==='home'?'/':destination==='settings'?'/settings':'/downloader'
    if(window.location.pathname!==path)window.history.pushState({},'',path)
@@ -37,9 +39,8 @@
  const poster=(path:string)=>path?'https://image.tmdb.org/t/p/w500'+path:''
  const backdrop=(path:string)=>path?'https://image.tmdb.org/t/p/w1280'+path:''
  const completed = $derived(movies.filter(m=>m.status==='completed').length)
- const active = $derived(movies.filter(m=>m.status==='downloading'||m.status==='metadata').length)
- const filtered = $derived(movies.filter(m => (filter==='all'||(filter==='active'&&m.status!=='completed'&&m.status!=='paused')||(filter==='complete'&&m.status==='completed')) && (m.title.toLowerCase().includes(search.toLowerCase())||m.year.includes(search))))
- const featured = $derived(movies.find(m=>m.backdrop)||movies[0])
+ const active = $derived(countDownloading(movies))
+ const libraryView = $derived(selectLibraryPage(movies,search,libraryPage,10))
  const call = async (path:string,method='GET',data?:object)=>{
    let response:Response
    try{
@@ -61,6 +62,7 @@
    try{
      const result=await call('settings')
      tmdbConfigured=Boolean(result.tmdbConfigured)
+     tmdbChecked=true
    }catch(e){error=(e as Error).message}
    finally{settingsLoading=false}
  }
@@ -99,11 +101,11 @@
    try{
      const state=await call('auth/status')
      auth=state.setupRequired?'setup':state.authenticated?'ready':'login'
-     if(auth==='ready'){await refresh();connect();if(page==='settings')await loadSettings()}
+     if(auth==='ready'){await refresh();connect();if(page==='settings'||page==='downloader')await loadSettings()}
    }catch{error='Unable to connect to Cloudflix server';auth='login'}
  }
  onMount(()=>{
-   const handleBack=()=>{page=window.location.pathname==='/settings'?'settings':window.location.pathname==='/downloader'?'downloader':'home';if(page==='settings')void loadSettings()}
+   const handleBack=()=>{page=window.location.pathname==='/settings'?'settings':window.location.pathname==='/downloader'?'downloader':'home';if(page==='settings'||page==='downloader')void loadSettings()}
    window.addEventListener('popstate',handleBack)
    checkAuth()
    return ()=>{live?.close();window.removeEventListener('popstate',handleBack)}
@@ -129,10 +131,21 @@
  const add=async()=>{
    error='';notice='';submitting=true
    try{
+     const settings=await call('settings')
+     tmdbConfigured=Boolean(settings.tmdbConfigured)
+     tmdbChecked=true
+     if(!tmdbConfigured){
+       error='Set your TMDB API key in Settings before downloading a movie.'
+       return
+     }
      await call('magnets','POST',{magnet:magnet.trim()})
-     magnet='';notice='Magnet added to your download queue';navigate('downloader');await refresh()
-   }catch(e){error=(e as Error).message}
-   finally{submitting=false}
+     magnet=''
+     notice='Magnet added to your download queue'
+     await refresh()
+   }catch(e){
+     error=(e as Error).message
+     if(error.includes('TMDB API key')){tmdbConfigured=false;tmdbChecked=true}
+   }finally{submitting=false}
  }
  const action=async(m:Movie,verb:'pause'|'resume'|'remove')=>{
    if(verb==='remove'&&!confirm('Remove this torrent from Cloudflix? Downloaded files are retained.'))return
@@ -177,14 +190,8 @@
    <div class="side-label">MENU</div>
    <nav aria-label="Main navigation">
     <button class:active={page==='home'} onclick={()=>navigate('home')}><House size={19}/> Home</button>
-    <button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={19}/> Downloader {#if active}<span class="nav-count">{active}</span>{/if}</button>
+    <button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={19}/> Downloader {#if active>0}<span class="nav-count" aria-label={active+' active downloads'}>{active}</span>{/if}</button>
     <button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={19}/> Settings</button>
-   </nav>
-   <div class="side-label library-label">YOUR LIBRARY</div>
-   <nav>
-    <button onclick={()=>{navigate('home');filter='all'}}><Clapperboard size={18}/> All movies <span class="nav-count">{movies.length}</span></button>
-    <button onclick={()=>{navigate('home');filter='complete'}}><CheckCircle2 size={18}/> Completed</button>
-    <button onclick={()=>{navigate('home');filter='active'}}><LoaderCircle size={18}/> In progress</button>
    </nav>
    <div class="sidebar-bottom">
     <div class="server-status"><span class:online={connected} class="status-dot"></span><span>{connected?'Server connected':'Reconnecting...'}</span></div>
@@ -194,37 +201,64 @@
   <main class="main">
    <header class="topbar">
     <div class="mobile-brand brand"><span class="brand-icon"><Film size={19}/></span><strong>cloud<span>flix</span></strong></div>
-    <div class="top-caption">{page==='home'?'Your personal cinema':page==='settings'?'Configure Cloudflix':'Manage your downloads'}</div>
+    <div class="top-caption">{page==='home'?'Movies':page==='settings'?'Settings':'Downloader'}</div>
     <div class="top-right"><span class="version">{version}</span><div class="avatar">C</div></div>
    </header>
    {#if notice}<div class="toast success"><CheckCircle2 size={16}/>{notice}<button onclick={()=>notice=''} aria-label="Dismiss"><X size={16}/></button></div>{/if}
    {#if error}<div class="toast error"><AlertCircle size={16}/>{error}<button onclick={()=>error=''} aria-label="Dismiss"><X size={16}/></button></div>{/if}
    {#if page==='home'}
-    <section class="hero" style:background-image={featured?.backdrop? 'linear-gradient(90deg,#111925 0%,rgba(17,25,37,.92) 32%,rgba(17,25,37,.28) 100%),url('+backdrop(featured.backdrop)+')':''}>
-     <div class="eyebrow"><span class="red-dot"></span> YOUR PERSONAL MOVIE HUB</div>
-     {#if featured}
-      <div class="hero-copy"><h1>{featured.title}</h1><p>{featured.year||'Movie'} · {featured.status==='completed'?'Ready to download':'In your library'}</p><div class="hero-actions"><button class="primary" onclick={()=>selected=featured}><Play size={18} fill="currentColor"/> View details</button><button class="outline" onclick={()=>navigate('downloader')}><Download size={18}/> Downloads</button></div></div>
-     {:else}
-      <div class="hero-copy"><h1>All your movies.<br/><em>One beautiful place.</em></h1><p>Add a magnet link to get started. Cloudflix organizes your downloads and finds their movie artwork automatically.</p><div class="hero-actions"><button class="primary" onclick={()=>navigate('downloader')}><Plus size={18}/> Add your first movie</button></div></div>
-     {/if}
-     <div class="hero-vignette"></div>
-    </section>
-    <div class="dashboard-content">
-     <div class="stat-grid">
-      <div class="stat"><div class="stat-icon red"><Clapperboard size={20}/></div><div><span>Total movies</span><strong>{movies.length}</strong></div></div>
-      <div class="stat"><div class="stat-icon blue"><Download size={20}/></div><div><span>Downloading</span><strong>{active}</strong></div></div>
-      <div class="stat"><div class="stat-icon green"><CheckCircle2 size={20}/></div><div><span>Completed</span><strong>{completed}</strong></div></div>
-      <div class="stat"><div class="stat-icon purple"><HardDrive size={20}/></div><div><span>Downloaded</span><strong>{formatBytes(movies.reduce((a,m)=>a+m.completed,0))}</strong></div></div>
+    <div class="dashboard-content library-page">
+     <div class="library-toolbar">
+      <div class="library-heading">
+       <h1>Movies</h1>
+       <p>{libraryView.total} downloaded {libraryView.total===1?'movie':'movies'}</p>
+      </div>
+      <div class="searchbox library-search">
+       <Search size={18}/>
+       <input value={search} oninput={(event)=>{search=event.currentTarget.value;libraryPage=1}} placeholder="Search movies" aria-label="Search downloaded movies"/>
+      </div>
      </div>
-     <div class="section-heading"><div><h2>My Movie Library</h2><p>Browse and manage your collection</p></div><div class="filter-row"><div class="searchbox"><Search size={17}/><input bind:value={search} placeholder="Search movies" aria-label="Search movies"/></div></div></div>
-     <div class="tabs"><button class:chosen={filter==='all'} onclick={()=>filter='all'}>All Movies</button><button class:chosen={filter==='active'} onclick={()=>filter='active'}>Downloading</button><button class:chosen={filter==='complete'} onclick={()=>filter='complete'}>Completed</button></div>
-     {#if filtered.length}
-      <div class="movie-grid">{#each filtered as m (m.hash)}<button class="movie-card" onclick={()=>selected=m}>
-       <div class="poster">{#if m.poster}<img src={poster(m.poster)} alt={'Poster for '+m.title} loading="lazy"/>{:else}<div class="poster-fallback"><Film size={45}/><small>NO POSTER YET</small></div>{/if}<span class:done={m.status==='completed'} class="movie-status">{m.status==='completed'?'✓ Completed':m.status==='paused'?'Paused':m.status==='metadata'?'Loading':'↓ '+percent(m).toFixed(0)+'%'}</span></div>
-       <h3>{m.title}</h3><p>{m.year||'Unknown year'} · {formatBytes(m.size)}</p>
-      </button>{/each}</div>
+     {#if libraryView.movies.length}
+      <div class="movie-grid library-grid">
+       {#each libraryView.movies as m (m.hash)}
+        <button type="button" class="movie-card" onclick={()=>selected=m} title={m.title+' ('+(m.year||'Year unknown')+')'}>
+         <div class="poster">
+          {#if m.poster}
+           <img src={poster(m.poster)} alt={'Poster for '+m.title} loading="lazy"/>
+          {:else}
+           <div class="poster-fallback"><Film size={38}/><small>NO POSTER</small></div>
+          {/if}
+         </div>
+         <h3>{m.title}</h3>
+         <div class="movie-details">
+          <span>{m.year||'Year N/A'}</span>
+          <span class="movie-rating" title="TMDB rating out of 10">
+           <Star size={13} fill={m.rating>0?'currentColor':'none'}/>
+           {m.rating>0?m.rating.toFixed(1):'N/A'}
+          </span>
+         </div>
+        </button>
+       {/each}
+      </div>
+      <nav class="library-pagination" aria-label="Movie pages">
+       <span class="pagination-summary">Showing {libraryView.from}–{libraryView.to} of {libraryView.total}</span>
+       {#if libraryView.totalPages>1}
+        <div class="pagination-buttons">
+         <button type="button" aria-label="Previous page" disabled={libraryView.page===1} onclick={()=>libraryPage=libraryView.page-1}><ChevronLeft size={17}/></button>
+         {#each libraryView.pages as number}
+          <button type="button" class:current={libraryView.page===number} aria-label={'Page '+number} aria-current={libraryView.page===number?'page':undefined} onclick={()=>libraryPage=number}>{number}</button>
+         {/each}
+         <button type="button" aria-label="Next page" disabled={libraryView.page===libraryView.totalPages} onclick={()=>libraryPage=libraryView.page+1}><ChevronRight size={17}/></button>
+        </div>
+       {/if}
+      </nav>
      {:else}
-      <div class="empty"><div class="empty-icon"><Film size={34}/></div><h3>{movies.length?'No matching movies':'Your collection starts here'}</h3><p>{movies.length?'Try a different search or filter.':'Movies you download will appear here with posters and artwork.'}</p><button class="primary" onclick={()=>{navigate('downloader');filter='all'}}><Plus size={17}/> Open downloader</button></div>
+      <div class="empty library-empty">
+       <div class="empty-icon"><Film size={30}/></div>
+       <h3>{search.trim()?'No matching movies':'No downloaded movies yet'}</h3>
+       <p>{search.trim()?'Try another title or release year.':'Completed downloads will appear here with their poster, title, year, and TMDB rating.'}</p>
+       {#if !search.trim()}<button class="primary" onclick={()=>navigate('downloader')}><Plus size={17}/> Open Downloader</button>{/if}
+      </div>
      {/if}
     </div>
    {:else if page==='settings'}
@@ -270,12 +304,25 @@
     </div>
    {:else}
     <div class="dashboard-content download-page">
+     <div class="stat-grid downloader-stats">
+      <div class="stat"><div class="stat-icon red"><Clapperboard size={20}/></div><div><span>Total downloads</span><strong>{movies.length}</strong></div></div>
+      <div class="stat"><div class="stat-icon blue"><Download size={20}/></div><div><span>Downloading</span><strong>{active}</strong></div></div>
+      <div class="stat"><div class="stat-icon green"><CheckCircle2 size={20}/></div><div><span>Completed</span><strong>{completed}</strong></div></div>
+      <div class="stat"><div class="stat-icon purple"><HardDrive size={20}/></div><div><span>Downloaded</span><strong>{formatBytes(movies.reduce((a,m)=>a+m.completed,0))}</strong></div></div>
+     </div>
      <div class="page-title"><div><div class="eyebrow"><span class="red-dot"></span> DOWNLOAD MANAGER</div><h1>Downloader</h1><p>Add magnet links and manage your downloads from anywhere.</p></div></div>
+     {#if tmdbChecked&&!tmdbConfigured&&!settingsLoading}
+      <div class="tmdb-required" role="alert">
+       <AlertCircle size={20}/>
+       <div><strong>TMDB API key required</strong><p>Configure your TMDB API key in Settings before downloading a movie.</p></div>
+       <button type="button" onclick={()=>navigate('settings')}><Settings size={16}/> Open Settings</button>
+      </div>
+     {/if}
      <form class="magnet-form" onsubmit={(e)=>{e.preventDefault();add()}}>
       <div class="form-head"><span class="form-icon"><Plus size={22}/></span><div><h2>Add a new download</h2><p>Paste a magnet URI to start downloading to your VPS.</p></div></div>
       <label for="magnet">MAGNET URI</label>
       <textarea id="magnet" bind:value={magnet} placeholder="magnet:?xt=urn:btih:..." rows="3" required></textarea>
-      <div class="form-footer"><span>Only download content you're authorized to use.</span><button class="primary" type="submit" disabled={submitting||!magnet.trim()}>{#if submitting}<LoaderCircle size={17}/>{:else}<ArrowDownToLine size={17}/>{/if} Start Download</button></div>
+      <div class="form-footer"><span>Only download content you're authorized to use.</span><button class="primary" type="submit" disabled={submitting||!magnet.trim()||(tmdbChecked&&!tmdbConfigured)}>{#if submitting}<LoaderCircle size={17}/>{:else}<ArrowDownToLine size={17}/>{/if} Start Download</button></div>
      </form>
      <div class="section-heading"><div><h2>Download Queue</h2><p>{movies.length} total · {active} active · {completed} completed</p></div></div>
      {#if movies.length}
@@ -292,7 +339,7 @@
    {/if}
    <footer class="footer"><span>© Cloudflix · Self-hosted with ❤️</span><span>Movie data from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer">TMDB</a>; not endorsed or certified by TMDB.</span></footer>
   </main>
-  <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>navigate('home')}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={20}/> Downloader</button><button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={20}/> Settings</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
+  <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>navigate('home')}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={20}/> Downloader {#if active>0}<span class="mobile-download-count" aria-label={active+' active downloads'}>{active}</span>{/if}</button><button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={20}/> Settings</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
  </div>
  {#if selected}
   <div class="modal-backdrop" role="presentation" onclick={(event)=>{if(event.target===event.currentTarget)selected=null}}>

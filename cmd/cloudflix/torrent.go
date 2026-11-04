@@ -180,13 +180,14 @@ func (e *engine) refreshMetadata(ctx context.Context){
  type candidate struct{hash,title,year string}
  pending:=make([]candidate,0)
  e.mu.Lock()
+ key:=e.tmdbKey
  for _,item:=range e.entries{
   if item.lookedUp || item.torrent.Info()==nil || time.Now().Before(item.retryAt){continue}
   title,year:=identify(item.torrent.Name())
   if title==""{continue}
   item.title=title;item.year=year
   _,_=e.db.Exec("UPDATE torrents SET title=?,year=? WHERE hash=?",title,year,item.hash)
-  if e.tmdbKey==""{
+  if key==""{
    item.lookedUp=true
   }else{
    item.attempts++
@@ -198,7 +199,7 @@ func (e *engine) refreshMetadata(ctx context.Context){
  e.mu.Unlock()
  for _,item:=range pending{
   select{case <-ctx.Done():return;default:}
-  title,year,poster,backdrop:=lookupMovie(ctx,e.tmdbKey,item.title,item.year)
+  title,year,poster,backdrop:=lookupMovie(ctx,key,item.title,item.year)
   if title==""{continue}
   e.mu.Lock()
   if current:=e.entries[item.hash];current!=nil{

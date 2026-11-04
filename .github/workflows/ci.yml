@@ -31,5 +31,25 @@ jobs:
         run: go vet ./...
       - name: Validate deployment shell scripts
         run: bash -n installer/install.sh installer/update.sh installer/pin.sh installer/uninstall.sh
+      - name: Verify installer refuses occupied port 80
+        run: |
+          set -euo pipefail
+          mock="$(mktemp -d)"
+          trap 'rm -rf "$mock"' EXIT
+          cat > "$mock/ss" <<'SH'
+          #!/bin/bash
+          printf 'LISTEN 0 128 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=567,fd=3))\n'
+          SH
+          chmod 0755 "$mock/ss"
+          set +e
+          output="$(sudo env PATH="$mock:$PATH" bash installer/install.sh 2>&1)"
+          result=$?
+          set -e
+          echo "$output"
+          test "$result" -ne 0
+          grep -Fq 'TCP port 80 is already in use' <<< "$output"
+          grep -Fq 'nginx' <<< "$output"
+          grep -Fq 'pid=567' <<< "$output"
+          test ! -e /etc/systemd/system/cloudflix.service
       - name: Compile Linux binary
         run: CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=dev" -o /tmp/cloudflix ./cmd/cloudflix

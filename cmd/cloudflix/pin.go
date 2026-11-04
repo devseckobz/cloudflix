@@ -19,6 +19,7 @@ import (
 var pinPattern=regexp.MustCompile("^[0-9]{6}$")
 const pinLockDuration = 15 * time.Minute
 const maxPinFailures = 5
+var ErrPINNotConfigured = errors.New("Cloudflix PIN is not configured")
 
 // SQLite keeps the original password_hash column to migrate existing installations
 // without destroying user records. New values always contain a hash of a six-digit PIN.
@@ -64,7 +65,7 @@ func pinCommand(args []string) error {
  if _,err=db.Exec("PRAGMA busy_timeout=5000");err!=nil{return err}
  if err:=ensurePINSchema(db);err!=nil{return err}
  if args[0]=="status"{
-  if !pinConfigured(db){return errors.New("Cloudflix PIN is not configured")}
+  if !pinConfigured(db){return ErrPINNotConfigured}
   fmt.Println("Cloudflix PIN configured")
   return nil
  }

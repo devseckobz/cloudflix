@@ -30,6 +30,22 @@ wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/
 
 Existing installations using the old password login are asked to choose a **6-digit PIN once** during their next update. Your movies and settings stay intact.
 
+## Uninstall / clean reinstall
+
+**Warning:** This permanently deletes all Cloudflix movies, downloads, the database, settings, and PIN.
+
+```bash
+wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/uninstall.sh | sudo bash
+```
+
+Type `DELETE CLOUDFLIX` when prompted. The script stops and disables the service, removes Cloudflix files and its Caddy site, and leaves unrelated services alone. Then run **Install** again above.
+
+To uninstall the application **without deleting your movies and database**:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/uninstall.sh | sudo env CLOUDFLIX_KEEP_DATA=1 bash
+```
+
 ## Change or reset PIN
 
 ```bash

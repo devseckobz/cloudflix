@@ -1,6 +1,6 @@
 <script lang="ts">
  import { onMount } from 'svelte'
- import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink } from 'lucide-svelte'
+ import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink } from 'lucide-svelte'
 
  type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,size:number,completed:number,progress:number,status:string,files:{path:string,size:number}[]}
  let page = $state<'home'|'downloader'>('home')

@@ -51,5 +51,13 @@ jobs:
           grep -Fq 'nginx' <<< "$output"
           grep -Fq 'pid=567' <<< "$output"
           test ! -e /etc/systemd/system/cloudflix.service
+      - name: Verify destructive uninstaller never prompts
+        run: |
+          set -euo pipefail
+          if grep -Fq '/dev/tty' installer/uninstall.sh || grep -Fq 'DELETE CLOUDFLIX' installer/uninstall.sh;then
+            echo "Uninstaller unexpectedly contains interactive confirmation"
+            exit 1
+          fi
+          grep -Fq 'CLOUDFLIX_KEEP_DATA' installer/uninstall.sh
       - name: Compile Linux binary
         run: CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=dev" -o /tmp/cloudflix ./cmd/cloudflix

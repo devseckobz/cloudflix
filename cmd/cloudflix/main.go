@@ -10,6 +10,7 @@ import (
  "encoding/json"
  "errors"
  "fmt"
+ "io"
  "log"
  "net"
  "net/http"
@@ -108,8 +109,10 @@ func readJSON(w http.ResponseWriter,r *http.Request,dst any)bool{
  decoder:=json.NewDecoder(r.Body);decoder.DisallowUnknownFields()
  if err:=decoder.Decode(dst);err!=nil{fail(w,400,"invalid request");return false}
  var extra any
- if decoder.Decode(&extra)!=nil{return true}
- fail(w,400,"unexpected trailing content");return false
+ if err:=decoder.Decode(&extra);err!=io.EOF{
+  fail(w,400,"unexpected trailing content");return false
+ }
+ return true
 }
 func randomToken()(string,error){data:=make([]byte,32);if _,err:=rand.Read(data);err!=nil{return "",err};return hex.EncodeToString(data),nil}
 func hashToken(token string)string{sum:=sha256.Sum256([]byte(token));return hex.EncodeToString(sum[:])}

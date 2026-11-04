@@ -19,11 +19,9 @@ var srtTimestamp = regexp.MustCompile(`\b([0-9]{2}:[0-9]{2}:[0-9]{2}),([0-9]{3})
 // text subtitle formats, not arbitrary torrent contents (scripts, HTML, etc.).
 func mediaKind(name string) (contentType string, subtitle bool) {
  switch strings.ToLower(filepath.Ext(name)) {
- case ".mp4", ".m4v":
+ case ".mp4":
   return "video/mp4", false
- case ".webm":
-  return "video/webm", false
- case ".vtt", ".srt":
+ case ".srt":
   return "text/vtt; charset=utf-8", true
  default:
   return "", false
@@ -98,15 +96,14 @@ func (a *application) streamMedia(w http.ResponseWriter,r *http.Request) {
  e.mu.Lock()
  item:=e.entries[hash]
  valid:=false
- if item!=nil && item.torrent!=nil && item.torrent.Info()!=nil {
-  torrent:=item.torrent
-  length:=torrent.Length()
-  if length>0 && torrent.BytesCompleted()>=length {
-   for _,file:=range torrent.Files(){
-    if filepath.ToSlash(file.Path())==requested {
-     valid=true
-     break
-    }
+ if item!=nil && item.validated && item.rejectionReason=="" && item.torrent!=nil && item.torrent.Info()!=nil {
+  for _,file:=range item.torrent.Files(){
+   if filepath.ToSlash(file.Path())==requested &&
+      allowedMediaPath(requested) &&
+      file.Length()>0 &&
+      file.BytesCompleted()>=file.Length() {
+    valid=true
+    break
    }
   }
  }

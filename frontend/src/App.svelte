@@ -265,26 +265,22 @@
   <main class="main">
    <header class="topbar">
     <div class="mobile-brand brand"><span class="brand-icon"><Film size={19}/></span><strong>cloud<span>flix</span></strong></div>
-    <div class="top-caption">{page==='home'?'Movies':page==='settings'?'Settings':'Downloader'}</div>
-    <div class="top-right"><span class="version">{version}</span><div class="avatar">C</div></div>
+    {#if page==='home'}
+     <label class="nav-movie-search">
+      <Search size={18}/>
+      <input value={search} oninput={(event)=>{search=event.currentTarget.value;libraryPage=1}} placeholder="Search movies" aria-label="Search downloaded movies"/>
+      {#if search.trim()}
+       <button type="button" aria-label="Clear search" onclick={()=>{search='';libraryPage=1}}><X size={16}/></button>
+      {/if}
+     </label>
+    {:else}
+     <span class="nav-page-caption">{page==='settings'?'Settings':'Downloader'}</span>
+    {/if}
    </header>
    {#if notice}<div class="toast success"><CheckCircle2 size={16}/>{notice}<button onclick={()=>notice=''} aria-label="Dismiss"><X size={16}/></button></div>{/if}
    {#if error}<div class="toast error"><AlertCircle size={16}/>{error}<button onclick={()=>error=''} aria-label="Dismiss"><X size={16}/></button></div>{/if}
    {#if page==='home'}
     <section class="movie-library" aria-label="Downloaded movies">
-     <div class="movie-library-toolbar">
-      <div class="movie-library-heading">
-       <h1>Movies</h1>
-       <span class="movie-library-count">{libraryView.total} {libraryView.total===1?'movie':'movies'}</span>
-      </div>
-      <label class="movie-library-search">
-       <Search size={17}/>
-       <input value={search} oninput={(event)=>{search=event.currentTarget.value;libraryPage=1}} placeholder="Search movies" aria-label="Search downloaded movies"/>
-       {#if search.trim()}
-        <button type="button" aria-label="Clear search" onclick={()=>{search='';libraryPage=1}}><X size={15}/></button>
-       {/if}
-      </label>
-     </div>
      {#if libraryView.movies.length}
       <div class="movie-library-grid">
        {#each libraryView.movies as movie (movie.hash)}
@@ -474,14 +470,13 @@
  {#if selected}
   <div class="modal-backdrop cinema-player-backdrop" role="presentation" onclick={(event)=>{if(event.target===event.currentTarget)closeMovie()}}>
    <div class="cinema-player-modal" role="dialog" aria-modal="true" aria-label={'Watch '+selected.title}>
-    <div class="cinema-player-heading">
+    <header class="cinema-player-heading">
      <div class="player-title-group">
-      <span class="library-kicker"><span class="kicker-mark"></span> NOW SHOWING</span>
       <h2>{selected.title}</h2>
-      <p>{selected.year||'Film'} {#if selected.rating>0}<span>·</span> <Star size={13} fill="currentColor"/> {selected.rating.toFixed(1)} / 10{/if}</p>
+      <p>{selected.year||'Movie'} {#if selected.rating>0}<span aria-hidden="true">·</span><Star size={13} fill="currentColor"/> {selected.rating.toFixed(1)} / 10{/if}</p>
      </div>
-     <button class="cinema-player-close" onclick={closeMovie} aria-label="Close player"><X size={23}/></button>
-    </div>
+     <button class="cinema-player-close" onclick={closeMovie} aria-label="Close player" title="Close"><X size={20}/></button>
+    </header>
     {#if selected.status==='completed' && selectedPlayback.video}
      <div class="cinema-video-frame">
       {#key selected.hash+selectedPlayback.video.path}
@@ -504,36 +499,22 @@
        </video>
       {/key}
      </div>
-     {#if playbackError}<p class="player-error"><AlertCircle size={16}/>{playbackError}</p>{/if}
+     {#if playbackError}<p class="player-error" role="alert"><AlertCircle size={16}/>{playbackError}</p>{/if}
      <div class="cinema-player-toolbar">
-      <div class="cinema-player-hint"><span class="player-ready-dot"></span> READY TO WATCH <span class="player-toolbar-sep">/</span> {formatBytes(selectedPlayback.video.size)}
-       {#if selectedPlayback.subtitles.length}<span class="player-toolbar-sep">/</span> {selectedPlayback.subtitles.length} SUBTITLE {selectedPlayback.subtitles.length===1?'TRACK':'TRACKS'}{/if}
+      <div class="cinema-player-hint">
+       <span>{formatBytes(selectedPlayback.video.size)}</span>
+       {#if selectedPlayback.subtitles.length}
+        <span class="player-toolbar-sep" aria-hidden="true">·</span>
+        <span>{selectedPlayback.subtitles.length} {selectedPlayback.subtitles.length===1?'subtitle':'subtitles'} available</span>
+       {/if}
       </div>
-      <div class="cinema-player-actions">
-       <a href={'/api/files/'+encodeURIComponent(selected.hash)+'?path='+encodeURIComponent(selectedPlayback.video.path)} title="Download MP4 video"><ArrowDownToLine size={16}/> Download MP4</a>
-       <button onclick={enterFullscreen} title="Enter fullscreen"><Maximize2 size={17}/> Fullscreen</button>
-      </div>
+      <button class="cinema-fullscreen-button" type="button" onclick={enterFullscreen}><Maximize2 size={17}/> Fullscreen</button>
      </div>
     {:else}
      <div class="cinema-player-unavailable">
       <MonitorPlay size={40} strokeWidth={1.2}/>
-      <h3>{selected.status==='rejected'?'Torrent was rejected':'Your film is almost ready.'}</h3>
-      <p>{selected.error||'Playback becomes available once the selected MP4 and subtitle files finish downloading.'}</p>
-     </div>
-    {/if}
-    {#if selected.files.length}
-     <div class="cinema-player-files">
-      <div class="cinema-player-files-title"><span>FILES ON YOUR SERVER</span><span>{selected.files.length} FILES</span></div>
-      {#each selected.files as file (file.path)}
-       <div class="cinema-player-file">
-        <span class="file-name">{file.path}</span>
-        {#if file.completed!==undefined && file.completed<file.size}
-         <span class="muted">{formatBytes(file.completed)} / {formatBytes(file.size)}</span>
-        {:else}
-         <a href={'/api/files/'+encodeURIComponent(selected.hash)+'?path='+encodeURIComponent(file.path)} title={'Download '+file.path}><ArrowDownToLine size={15}/><span>{formatBytes(file.size)}</span></a>
-        {/if}
-       </div>
-      {/each}
+      <h3>{selected.status==='rejected'?'Torrent was rejected':'Movie not ready yet'}</h3>
+      <p>{selected.error||'Playback is available when the MP4 download finishes.'}</p>
      </div>
     {/if}
    </div>

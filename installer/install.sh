@@ -7,7 +7,6 @@ BIN="/usr/local/bin/cloudflix"
 DATA="/var/lib/cloudflix"
 CONFIG="/etc/cloudflix/cloudflix.env"
 SERVICE="/etc/systemd/system/cloudflix.service"
-DOMAIN="${CLOUDFLIX_DOMAIN:-}"
 VERSION="${CLOUDFLIX_VERSION:-latest}"
 
 die(){ printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -24,8 +23,6 @@ command -v sha256sum >/dev/null || die "sha256sum is required"
 command -v tar >/dev/null || die "tar is required"
 command -v curl >/dev/null || command -v wget >/dev/null || die "curl or wget is required"
 [[ "$VERSION" == "latest" || "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][a-zA-Z0-9.]+)?$ ]] || die "Invalid CLOUDFLIX_VERSION"
-if [[ -n "$DOMAIN" && ! "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]]; then die "Invalid CLOUDFLIX_DOMAIN"; fi
-if [[ -n "${TMDB_API_KEY:-}" && ! "${TMDB_API_KEY}" =~ ^[a-zA-Z0-9_.-]+$ ]];then die "TMDB_API_KEY contains unsupported characters";fi
 [[ ! -e "$SERVICE" ]] || die "Cloudflix is installed. Use update.sh instead."
 command -v runuser >/dev/null || die "runuser is required"
 
@@ -52,10 +49,6 @@ choose_pin(){
   done
 }
 choose_pin
-if [[ -z "$DOMAIN" ]];then
-  IFS= read -r -p "HTTPS domain (Enter for private SSH access): " DOMAIN < /dev/tty || die "Could not read domain"
-  if [[ -n "$DOMAIN" && ! "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]];then die "Invalid domain";fi
-fi
 
 fetch(){ local src="$1" dst="$2"
  if command -v curl >/dev/null;then curl -fL --connect-timeout 15 --retry 3 --silent --show-error "$src" -o "$dst"
@@ -89,7 +82,7 @@ fi
 unset PIN
 if [[ ! -f "$CONFIG" ]];then
  # We do not log or print the secret.
- (umask 077; printf 'CLOUDFLIX_DATA_DIR=/var/lib/cloudflix\nCLOUDFLIX_LISTEN=127.0.0.1:3000\nTMDB_API_KEY=%s\n' "${TMDB_API_KEY:-}" > "$CONFIG")
+ (umask 077; printf 'CLOUDFLIX_DATA_DIR=/var/lib/cloudflix\nCLOUDFLIX_LISTEN=0.0.0.0:3000\n' > "$CONFIG")
 fi
 chmod 0600 "$CONFIG"
 cat > "$SERVICE" <<'UNIT'
@@ -120,25 +113,8 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable --now cloudflix.service
-if [[ -n "$DOMAIN" ]];then
- command -v apt-get >/dev/null || die "Domain HTTPS automation requires an apt-based distro; Cloudflix installed on localhost"
- info "Configuring Caddy HTTPS for $DOMAIN"
- export DEBIAN_FRONTEND=noninteractive
- apt-get update -qq
- apt-get install -y -qq caddy
- install -d -m 0755 /etc/caddy/conf.d
- printf '%s {\n    encode zstd gzip\n    reverse_proxy 127.0.0.1:3000\n}\n' "$DOMAIN" > /etc/caddy/conf.d/cloudflix.caddy
- if ! grep -Fq 'import /etc/caddy/conf.d/*.caddy' /etc/caddy/Caddyfile;then
-  printf '\nimport /etc/caddy/conf.d/*.caddy\n' >> /etc/caddy/Caddyfile
- fi
- caddy validate --config /etc/caddy/Caddyfile >/dev/null
- systemctl enable --now caddy
- systemctl reload caddy
- info "Cloudflix is ready at https://$DOMAIN — sign in with your 6-digit PIN."
-else
- info "Installed securely on 127.0.0.1:3000."
- info "From your computer use: ssh -L 3000:127.0.0.1:3000 USER@VPS_IP"
- info "Then open http://localhost:3000 and sign in with your 6-digit PIN."
- info "Set CLOUDFLIX_DOMAIN before installation to configure public HTTPS."
-fi
+info "Cloudflix is listening on all VPS interfaces at port 3000."
+info "Open http://YOUR_VPS_IP:3000 and sign in with your 6-digit PIN."
+info "Make sure your VPS firewall/provider allows TCP port 3000 from your trusted IP."
+info "WARNING: HTTP is unencrypted; the PIN, session cookies and TMDB token may be intercepted."
 info "Completed. systemctl status cloudflix"

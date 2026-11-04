@@ -176,9 +176,11 @@
 /* Movies: media-library layout based on straightforward poster-grid browsing. */
 .movie-library{
  flex:1;
- padding:28px clamp(20px,3vw,44px) 52px;
+ display:flex;
+ flex-direction:column;
+ padding:28px clamp(20px,3vw,44px) 24px;
  background:#0b1119;
- min-height:calc(100vh - 140px);
+ min-height:0;
 }
 .movie-library-grid{
  display:grid;
@@ -324,7 +326,10 @@ html{color-scheme:dark;scrollbar-color:#3d4c60 #0b1119;scrollbar-width:thin}
 /* Center movie pagination above the results count, below the poster grid. */
 .library-pagination-footer{
  display:flex;flex-direction:column;align-items:center;gap:11px;
- margin:32px auto 0;padding:0;border:0;
+ width:100%;
+ margin:auto auto 0;
+ padding:28px 0 0;
+ border:0;
 }
 .library-bottom-pagination{
  display:flex;align-items:center;justify-content:center;gap:7px;
@@ -347,7 +352,7 @@ html{color-scheme:dark;scrollbar-color:#3d4c60 #0b1119;scrollbar-width:thin}
  padding:0;margin:0;border:0;font-variant-numeric:tabular-nums;
 }
 @media(max-width:720px){
- .library-pagination-footer{margin-top:27px;gap:10px}
+ .library-pagination-footer{margin-top:auto;gap:10px;padding-top:27px}
  .library-bottom-pagination button{width:36px;height:36px;flex-basis:36px}
 }
 

@@ -2,8 +2,6 @@
 
 Self-hosted movie downloader with a modern web interface. Paste a magnet link, track downloads, and organize your movie library with TMDB posters and release dates.
 
-**Go · Svelte 5 · SQLite · One binary · Linux VPS**
-
 ## Install
 
 On an Ubuntu/Debian VPS with systemd (amd64 or arm64):

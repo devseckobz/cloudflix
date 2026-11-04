@@ -24,6 +24,8 @@ func Handler() http.Handler {
    contents,err:=fs.ReadFile(sub,name)
    if err!=nil {http.Error(w,"frontend build unavailable",503);return}
    w.Header().Set("Content-Type","text/html; charset=utf-8")
+   // Never serve a cached application shell after a binary upgrade.
+   w.Header().Set("Cache-Control","no-store, must-revalidate")
    http.ServeContent(w,r,"cloudflix.html",time.Time{},bytes.NewReader(contents))
    return
   }

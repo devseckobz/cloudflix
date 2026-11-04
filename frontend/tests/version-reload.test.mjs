@@ -31,7 +31,7 @@ test('invalid, missing and placeholder versions never force a reload', () => {
 })
 
 test('app refresh and Settings update polling both feed the version monitor', () => {
-  const app = (await import('node:fs')).readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8')
   assert.match(app, /createVersionReloadMonitor\(\(\)=>window\.location\.reload\(\)\)/)
   assert.match(app, /versionMonitor\.observe\(state\.version\)/)
   assert.match(app, /versionMonitor\.observe\(data\.currentVersion\)/)

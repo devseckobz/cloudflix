@@ -8,7 +8,7 @@
 
  type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
  type InspectedFile = {path:string,size:number,selected:boolean}
- type FileInspection = {available:boolean,files:InspectedFile[],total:number,truncated?:boolean,rejected:boolean,reason:string,message?:string}
+ type FileInspection = {available:boolean,fetching?:boolean,files:InspectedFile[],total:number,truncated?:boolean,rejected:boolean,reason:string,message?:string}
  let page = $state<'home'|'downloader'|'settings'>(typeof window!=='undefined'&&window.location.pathname==='/settings'?'settings':typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
  let auth = $state<'loading'|'setup'|'login'|'ready'>('loading')
  let pin = $state('')
@@ -121,21 +121,31 @@
    fileViewerLoading=false
    fileViewerError=''
  }
- const showFiles=async(movie:Pick<Movie,'hash'|'title'|'status'>)=>{
-   // Fetch only on demand: large torrent file lists never bloat live updates.
-   fileViewer={hash:movie.hash,title:movie.title,status:movie.status}
-   inspectedFiles=null
-   fileViewerLoading=true
+ const loadFileList=async(hash:string,retry=false,quiet=false)=>{
+   if(!quiet)fileViewerLoading=true
    fileViewerError=''
-   const hash=movie.hash
    try{
-     const result=await call('torrents/'+encodeURIComponent(hash)+'/files')
+     const result=retry
+       ?await call('torrents/'+encodeURIComponent(hash)+'/files?retry=1')
+       :await call('torrents/'+encodeURIComponent(hash)+'/files')
      if(fileViewer?.hash===hash)inspectedFiles=result as FileInspection
    }catch(e){
      if(fileViewer?.hash===hash)fileViewerError=(e as Error).message
    }finally{
      if(fileViewer?.hash===hash)fileViewerLoading=false
    }
+ }
+ const showFiles=async(movie:Pick<Movie,'hash'|'title'|'status'>)=>{
+   // Rejected torrents may need their metadata fetched again after a restart.
+   fileViewer={hash:movie.hash,title:movie.title,status:movie.status}
+   inspectedFiles=null
+   fileViewerError=''
+   await loadFileList(movie.hash)
+ }
+ const retryFileInspection=async()=>{
+   if(!fileViewer)return
+   inspectedFiles=null
+   await loadFileList(fileViewer.hash,true)
  }
  const enterFullscreen=async()=>{
    const video=playerVideo
@@ -234,7 +244,12 @@
    const updaterPoll=setInterval(()=>{
      if(page==='settings'&&auth==='ready')void loadUpdateInfo(true)
    },4500)
-   return ()=>{live?.close();clearInterval(updaterPoll);if(noticeTimer!==undefined)clearTimeout(noticeTimer);window.removeEventListener('popstate',handleBack)}
+   const fileInspectionPoll=setInterval(()=>{
+     if(auth==='ready'&&fileViewer&&inspectedFiles?.fetching&&!fileViewerLoading){
+       void loadFileList(fileViewer.hash,false,true)
+     }
+   },2000)
+   return ()=>{live?.close();clearInterval(updaterPoll);clearInterval(fileInspectionPoll);if(noticeTimer!==undefined)clearTimeout(noticeTimer);window.removeEventListener('popstate',handleBack)}
  })
  const authenticate=async()=>{
    error=''
@@ -614,7 +629,13 @@
     {#if fileViewerLoading}
      <div class="file-inspector-empty" role="status"><LoaderCircle class="spin" size={22}/><p>Inspecting torrent file list…</p></div>
     {:else if fileViewerError}
-     <div class="file-inspector-empty" role="alert"><AlertCircle size={23}/><p>{fileViewerError}</p><button type="button" onclick={()=>{if(fileViewer)void showFiles(fileViewer)}}>Retry</button></div>
+     <div class="file-inspector-empty" role="alert"><AlertCircle size={23}/><p>{fileViewerError}</p><button type="button" onclick={retryFileInspection}>Retry</button></div>
+    {:else if inspectedFiles?.fetching}
+     <div class="file-inspector-empty" role="status">
+      <LoaderCircle class="spin" size={24}/>
+      <p>{inspectedFiles.message||'Fetching torrent filenames from peers…'}</p>
+      <p class="file-inspector-note">Only torrent metadata is requested. No movie files will be downloaded.</p>
+     </div>
     {:else if inspectedFiles?.available}
      <div class="file-inspector-summary">
       <span>{inspectedFiles.total} {inspectedFiles.total===1?'file':'files'} found</span>
@@ -634,7 +655,13 @@
       <p class="file-inspector-note">Showing the first {inspectedFiles.files.length} files of {inspectedFiles.total}. The file list is limited for performance.</p>
      {/if}
     {:else}
-     <div class="file-inspector-empty"><Files size={24}/><p>{inspectedFiles?.message||'No file metadata available yet.'}</p></div>
+     <div class="file-inspector-empty">
+      <Files size={24}/>
+      <p>{inspectedFiles?.message||'No file metadata available yet.'}</p>
+      {#if fileViewer.status==='rejected'}
+       <button type="button" onclick={retryFileInspection}>Retry file inspection</button>
+      {/if}
+     </div>
     {/if}
    </section>
   </div>

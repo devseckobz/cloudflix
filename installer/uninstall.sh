@@ -8,6 +8,10 @@ BIN="/usr/local/bin/cloudflix"
 UNIT="/etc/systemd/system/cloudflix.service"
 CONFIG_DIR="/etc/cloudflix"
 DATA_DIR="/var/lib/cloudflix"
+HELPER_DIR="/usr/local/libexec/cloudflix"
+UPDATER_STATE="/var/lib/cloudflix-update"
+UPDATER_PATH="/etc/systemd/system/cloudflix-update.path"
+UPDATER_UNIT="/etc/systemd/system/cloudflix-update.service"
 CADDY_SNIPPET="/etc/caddy/conf.d/cloudflix.caddy"
 KEEP_DATA="${CLOUDFLIX_KEEP_DATA:-0}"
 
@@ -39,9 +43,19 @@ guard_directory(){
   done <<< "$mounts"
 }
 guard_directory "$CONFIG_DIR"
+guard_directory "$HELPER_DIR"
+guard_directory "$UPDATER_STATE"
 if [[ "$KEEP_DATA" == "0" ]];then guard_directory "$DATA_DIR";fi
+[[ ! -L "$UPDATER_PATH" && ! -L "$UPDATER_UNIT" ]] || die "Unexpected symlink at updater systemd unit; review manually."
 [[ ! -L "$UNIT" && ! -L "$BIN" ]] || die "Unexpected symlink at the service or binary path. Review manually."
 
+# Do not remove an installation mid-upgrade.
+if systemctl is-active --quiet cloudflix-update.service;then
+ die "A Cloudflix update is in progress. Uninstall after it finishes."
+fi
+if [[ -f "$UPDATER_PATH" ]];then
+ systemctl disable --now cloudflix-update.path || die "Unable to stop the web update watcher."
+fi
 log "Uninstalling Cloudflix and stopping its service..."
 if [[ "$KEEP_DATA" == 0 ]];then
   log "WARNING: Permanently deleting $DATA_DIR, including downloaded movies, database and PIN."
@@ -62,6 +76,14 @@ fi
 if [[ -f "$UNIT" ]];then rm -f -- "$UNIT";fi
 systemctl daemon-reload
 systemctl reset-failed cloudflix.service >/dev/null 2>&1 || true
+# Remove only the root-owned, Cloudflix-specific helper units and scripts.
+if [[ -f "$UPDATER_PATH" ]];then rm -f -- "$UPDATER_PATH";fi
+if [[ -f "$UPDATER_UNIT" ]];then rm -f -- "$UPDATER_UNIT";fi
+if [[ -d "$HELPER_DIR" ]];then rm -rf --one-file-system -- "$HELPER_DIR";fi
+if [[ -d "$UPDATER_STATE" ]];then rm -rf --one-file-system -- "$UPDATER_STATE";fi
+if [[ -d "$DATA_DIR" ]];then rm -f -- "$DATA_DIR/update.request";fi
+systemctl daemon-reload
+systemctl reset-failed cloudflix-update.service >/dev/null 2>&1 || true
 if [[ -f "$BIN" ]];then rm -f -- "$BIN";fi
 # An interrupted updater may leave a staged binary behind.
 if [[ -f "${BIN}.new" && ! -L "${BIN}.new" ]];then rm -f -- "${BIN}.new";fi

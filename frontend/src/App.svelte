@@ -161,12 +161,10 @@
  </div>
 {:else if auth==='login'}
  <div class="auth-screen auth-minimal">
-  <form class="auth-card auth-compact" onsubmit={(e)=>{e.preventDefault();void authenticate()}}>
+  <form class="auth-card auth-compact" novalidate onsubmit={(e)=>{e.preventDefault();void authenticate()}}>
    <div class="auth-wordmark"><span class="auth-logo"><Film size={23} strokeWidth={2.2}/></span><span>cloud<strong>flix</strong></span></div>
-   <h1>Enter your PIN</h1>
-   <p>Unlock your movie library.</p>
    <label for="pin">6-digit access PIN</label>
-   <input id="pin" class="pin-field" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required autocomplete="off" bind:value={pin} oninput={(event)=>{pin=event.currentTarget.value.replace(/[^0-9]/g,'').slice(0,6);error=''}} placeholder="••••••" aria-invalid={Boolean(error)} />
+   <input id="pin" class="pin-field" type="password" inputmode="numeric" maxlength="6" autocomplete="off" bind:value={pin} oninput={(event)=>{const digits=event.currentTarget.value.replace(/[^0-9]/g,'').slice(0,6);event.currentTarget.value=digits;pin=digits;error=''}} placeholder="••••••" aria-invalid={Boolean(error)} />
    {#if error}<div class="auth-error" role="alert"><AlertCircle size={16}/><span>{error}</span></div>{/if}
    <button class="primary auth-submit" disabled={submitting||pin.length!==6} type="submit">{#if submitting}<LoaderCircle size={17} class="spin"/>{:else}Continue <span aria-hidden="true">→</span>{/if}</button>
    <span class="auth-footer">Your personal movie space</span>

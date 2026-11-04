@@ -28,7 +28,7 @@ Updates use verified binaries from [GitHub Releases](https://github.com/devsecko
 
 ## Settings
 
-After signing in, open **Settings → TMDB Movie Metadata** to add, replace, or remove your **TMDB API Read Access Token**. Cloudflix verifies the token against TMDB and saves it locally. The browser never receives your saved token. [Get your token](https://www.themoviedb.org/settings/api).
+After signing in, open **Settings → TMDB Movie Metadata** to add, replace, or remove your **TMDB v3 API key (32 hex characters)** or **TMDB API Read Access Token**. Cloudflix verifies the token against TMDB and saves it locally. The browser never receives your saved token. [Get your token](https://www.themoviedb.org/settings/api).
 
 ## Uninstall / clean reinstall
 

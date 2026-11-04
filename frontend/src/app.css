@@ -297,3 +297,38 @@ html{color-scheme:dark;scrollbar-color:#3d4c60 #0b1119;scrollbar-width:thin}
  .cinema-player-toolbar{padding:10px 14px;flex-wrap:wrap}
  .cinema-video{max-height:70dvh}
 }
+
+
+/* Caption shortcuts live beside the theater fullscreen control. */
+.cinema-player-actions{display:flex;align-items:center;gap:8px;margin-left:auto;min-width:0;max-width:100%}
+.cinema-player-actions .cinema-cc-button{
+ flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;
+ min-width:43px;height:35px;padding:0 10px;
+ color:#d5dfeb;background:#1e2b39;border:1px solid #3a4b5e;
+ border-radius:7px;font-size:12px;font-weight:800;letter-spacing:.35px;
+}
+.cinema-player-actions .cinema-cc-button.active{
+ color:#fff;background:#df5b56;border-color:#ec7871;
+}
+.cinema-caption-languages{
+ display:flex;align-items:center;gap:6px;
+ max-width:min(48vw,465px);overflow-x:auto;overflow-y:hidden;
+ padding:2px 1px 4px;scrollbar-width:thin;
+}
+.cinema-player-actions .cinema-caption-languages button{
+ display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+ white-space:nowrap;min-height:31px;padding:6px 10px;border-radius:6px;
+ background:#182330;border:1px solid #334154;color:#a9b9ca;
+ font-size:11px;font-weight:600;line-height:1.1;
+}
+.cinema-player-actions .cinema-caption-languages button.active{
+ background:#2d4056;border-color:#6585a5;color:#eef6ff;
+}
+.cinema-player-actions button:hover:not(:disabled){filter:brightness(1.13)}
+.cinema-player-actions button:focus-visible{outline:2px solid #93b9db;outline-offset:2px}
+.cinema-player-actions .cinema-fullscreen-button{white-space:nowrap;flex:0 0 auto;margin-left:4px}
+@media(max-width:720px){
+ .cinema-player-actions{margin-left:0;width:100%;flex-wrap:wrap;justify-content:flex-start}
+ .cinema-caption-languages{max-width:calc(100vw - 102px);flex:1 1 130px}
+ .cinema-player-actions .cinema-fullscreen-button{margin-left:auto}
+}

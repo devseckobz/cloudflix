@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'New release tag (for example v0.1.5)'
+        description: 'New release tag (for example v0.1.6)'
         required: true
 permissions:
   contents: write
@@ -38,7 +38,7 @@ jobs:
           elif [[ "$REF_TYPE" == "tag" ]];then
             TAG="$REF_NAME"
           else
-            TAG="v0.1.4"
+            TAG="v0.1.5"
           fi
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][a-zA-Z0-9.]+)?$ ]]
           echo "TAG=$TAG" >> "$GITHUB_ENV"
@@ -53,6 +53,7 @@ jobs:
         if: env.ALREADY_RELEASED != 'true'
         run: |
           npm run check --prefix frontend
+          npm run test:login --prefix frontend
           npm run build --prefix frontend
       - name: Test Go application
         if: env.ALREADY_RELEASED != 'true'

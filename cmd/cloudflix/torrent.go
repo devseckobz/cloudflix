@@ -103,6 +103,30 @@ func selectedMediaFiles(paths []string)(selected []string,hasVideo bool){
  return
 }
 
+// Confirm every selected file piece is fully hash-verified before playback.
+// BytesCompleted also includes dirty/unverified chunks, so it alone is not
+// sufficient proof of a finished video or subtitle.
+func verifiedFile(file *torrent.File)bool{
+ if file.Length()<=0{return false}
+ states:=file.State()
+ if len(states)==0{return false}
+ for _,piece:=range states{
+  if !piece.Ok || !piece.Complete{return false}
+ }
+ return true
+}
+
+func selectedFilesVerified(tt *torrent.Torrent)bool{
+ if tt==nil || tt.Info()==nil{return false}
+ foundVideo:=false
+ for _,file:=range tt.Files(){
+  if !allowedMediaPath(filepath.ToSlash(file.Path())) || file.Length()<=0{continue}
+  if !verifiedFile(file){return false}
+  if strings.EqualFold(filepath.Ext(file.Path()),".mp4"){foundVideo=true}
+ }
+ return foundVideo
+}
+
 func selectedFileStats(tt *torrent.Torrent)(size,completed int64,files []map[string]any){
  files=make([]map[string]any,0)
  if tt==nil || tt.Info()==nil{return}
@@ -288,7 +312,7 @@ func (e *engine) snapshot()[]map[string]any{
    if tt.Info()!=nil{
     size,completed,files=selectedFileStats(tt)
    }
-   if item.validated && size>0 && completed>=size {
+   if item.validated && size>0 && completed>=size && selectedFilesVerified(tt) {
     status="completed"
    }else if item.paused{
     status="paused"
@@ -425,7 +449,7 @@ func (a *application) downloadFile(w http.ResponseWriter,r *http.Request){
  valid:=false
  if item!=nil && item.validated && item.torrent!=nil && item.torrent.Info()!=nil{
   for _,file:=range item.torrent.Files(){
-   if filepath.ToSlash(file.Path())==wanted && allowedMediaPath(wanted) && file.BytesCompleted()>=file.Length(){valid=true;break}
+   if filepath.ToSlash(file.Path())==wanted && allowedMediaPath(wanted) && verifiedFile(file){valid=true;break}
   }
  }
  e.mu.Unlock()

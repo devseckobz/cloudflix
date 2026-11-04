@@ -36,3 +36,11 @@ test('theater has just a compact title, video, subtitle info and fullscreen acti
  assert.doesNotMatch(footer,/NOW SHOWING/)
  assert.doesNotMatch(footer,/READY TO WATCH/)
 })
+
+test('theater ignores backdrop clicks and only its close button dismisses it',()=>{
+ const backdrop=footer.match(/<div class="modal-backdrop cinema-player-backdrop"[^>]*>/)?.[0]
+ assert.ok(backdrop,'theater backdrop must be present')
+ assert.doesNotMatch(backdrop,/onclick=/)
+ assert.match(footer,/<button class="cinema-player-close" onclick=\{closeMovie\} aria-label="Close player"/)
+ assert.equal((footer.match(/onclick=\{closeMovie\}/g)||[]).length,1)
+})

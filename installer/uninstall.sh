@@ -74,6 +74,8 @@ if [[ -f "$UNIT" ]];then rm -f -- "$UNIT";fi
 systemctl daemon-reload
 systemctl reset-failed cloudflix.service >/dev/null 2>&1 || true
 if [[ -f "$BIN" ]];then rm -f -- "$BIN";fi
+# An interrupted updater may leave a staged binary behind.
+if [[ -f "${BIN}.new" && ! -L "${BIN}.new" ]];then rm -f -- "${BIN}.new";fi
 if [[ -d "$CONFIG_DIR" ]];then rm -rf --one-file-system -- "$CONFIG_DIR";fi
 
 if [[ "$KEEP_DATA" == "0" ]];then
@@ -83,10 +85,20 @@ if [[ "$KEEP_DATA" == "0" ]];then
   fi
   if command -v getent >/dev/null 2>&1 && getent passwd cloudflix >/dev/null;then
     account="$(getent passwd cloudflix)"
-    IFS=: read -r _ _ _ _ _ home shell <<< "$account"
-    if [[ "$home" == "$DATA_DIR" && ( "$shell" == "/usr/sbin/nologin" || "$shell" == "/sbin/nologin" ) ]];then
-      if command -v userdel >/dev/null 2>&1;then
-        userdel cloudflix || log "Could not delete the cloudflix service user; review manually."
+    IFS=: read -r username pass uid primary_gid description home shell <<< "$account"
+    if [[ "$username" == "cloudflix" && "$home" == "$DATA_DIR" && ( "$shell" == "/usr/sbin/nologin" || "$shell" == "/sbin/nologin" ) ]];then
+      if command -v userdel >/dev/null 2>&1 && userdel cloudflix;then
+        # Only remove the group if it is the deleted account's original group,
+        # has no explicit members and is not another user's primary group.
+        if command -v groupdel >/dev/null 2>&1 && getent group cloudflix >/dev/null;then
+          group_info="$(getent group cloudflix)"
+          IFS=: read -r group_name group_pass group_gid group_members <<< "$group_info"
+          if [[ "$group_name" == "cloudflix" && "$group_gid" == "$primary_gid" && -z "$group_members" ]];then
+            groupdel cloudflix >/dev/null 2>&1 || log "Cloudflix group is still in use; keeping it."
+          fi
+        fi
+      else
+        log "Could not delete the cloudflix service user; review manually."
       fi
     else
       log "Keeping nonstandard cloudflix account (home/shell differ from installer settings)."

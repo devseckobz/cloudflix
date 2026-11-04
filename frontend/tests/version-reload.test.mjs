@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createVersionReloadMonitor } from '../src/lib/version-reload.js'
@@ -35,3 +36,9 @@ test('app refresh and Settings update polling both feed the version monitor', ()
   assert.match(app, /versionMonitor\.observe\(state\.version\)/)
   assert.match(app, /versionMonitor\.observe\(data\.currentVersion\)/)
 })
+
+test('the server does not cache the HTML shell after update', () => {
+  const source = readFileSync(new URL('../../static/embed.go', import.meta.url), 'utf8')
+  assert.match(source, /Cache-Control","no-store, must-revalidate"/)
+})
+

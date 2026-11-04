@@ -4,7 +4,8 @@
  import {findPlayback,mediaURL} from './lib/media.js'
  import {createVersionReloadMonitor} from './lib/version-reload.js'
  import {applySubtitleSelection} from './lib/subtitles.js'
- import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight, Maximize2, Clapperboard as FilmClap, MonitorPlay, RefreshCw, ArrowUpCircle, Files } from '@lucide/svelte'
+ import {copyToClipboard} from './lib/clipboard.js'
+ import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight, Maximize2, Clapperboard as FilmClap, MonitorPlay, RefreshCw, ArrowUpCircle, Files, Copy } from '@lucide/svelte'
 
  type Movie = {hash:string,title:string,year:string,genre:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
  type InspectedFile = {path:string,size:number,selected:boolean}
@@ -305,6 +306,20 @@
      if(error.includes('TMDB API key')){tmdbConfigured=false;tmdbChecked=true}
    }finally{submitting=false}
  }
+ const copyTorrentMagnet=async(movie:Movie)=>{
+   try{
+     const result=await call('torrents/'+encodeURIComponent(movie.hash)+'/magnet')
+     if(typeof result?.magnet!=='string'||!result.magnet.startsWith('magnet:?')){
+       throw new Error('Magnet link unavailable for this download.')
+     }
+     if(!await copyToClipboard(result.magnet)){
+       throw new Error('Clipboard access was denied by your browser.')
+     }
+     notify('Magnet link copied')
+   }catch(e){
+     error=(e as Error).message
+   }
+ }
  const action=async(m:Movie,verb:'pause'|'resume'|'remove')=>{
    if(verb==='remove'){
      const message=m.status==='rejected'
@@ -597,6 +612,7 @@
             <button type="button" class="queue-watch-button" title={'Watch '+m.title} onclick={()=>openMovie(m)}><MonitorPlay size={17}/><span>Watch</span></button>
            {/if}
            <button type="button" class="queue-files-button" title={'View torrent files for '+m.title} aria-label={'View files for '+m.title} onclick={()=>showFiles(m)}><Files size={17}/><span>Files</span></button>
+           <button type="button" class="queue-copy-button" title={'Copy magnet for '+m.title} aria-label={'Copy magnet link for '+m.title} onclick={()=>copyTorrentMagnet(m)}><Copy size={17}/></button>
            <button type="button" class="danger" title={'Remove '+m.title+' from queue'} aria-label={'Remove '+m.title} onclick={()=>action(m,'remove')}><Trash2 size={17}/></button>
           </div>
          </article>

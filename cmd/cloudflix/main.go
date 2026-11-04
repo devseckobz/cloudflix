@@ -85,7 +85,7 @@ func main() {
  mux.HandleFunc("POST /api/torrents/{hash}/{action}",a.require(a.torrentAction))
  mux.HandleFunc("GET /api/files/{hash}",a.require(a.downloadFile))
  mux.Handle("/",static.Handler())
- addr:=env("CLOUDFLIX_LISTEN","0.0.0.0:3000")
+ addr:=env("CLOUDFLIX_LISTEN","0.0.0.0:80")
  server:=&http.Server{Addr:addr,Handler:securityHeaders(mux),ReadHeaderTimeout:5*time.Second,IdleTimeout:60*time.Second,ReadTimeout:20*time.Second,MaxHeaderBytes:1<<20}
  log.Printf("Cloudflix %s listening on %s",version,addr)
  if err:=server.ListenAndServe();err!=nil && !errors.Is(err,http.ErrServerClosed){log.Fatal(err)}

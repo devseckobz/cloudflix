@@ -287,7 +287,12 @@
    }finally{submitting=false}
  }
  const action=async(m:Movie,verb:'pause'|'resume'|'remove')=>{
-   if(verb==='remove'&&!confirm('Remove this torrent from Cloudflix? Downloaded files are retained.'))return
+   if(verb==='remove'){
+     const message=m.status==='rejected'
+       ?'Delete this rejected torrent? Its record and temporary file list will be removed.'
+       :'Remove this torrent from Cloudflix? Downloaded files are retained.'
+     if(!confirm(message))return
+   }
    error='';notice=''
    try{await call('torrents/'+encodeURIComponent(m.hash)+'/'+verb,'POST',{});if(verb==='remove' && selected?.hash===m.hash)closeMovie();if(verb==='remove' && fileViewer?.hash===m.hash)closeFileViewer();await refresh()}
    catch(e){error=(e as Error).message}

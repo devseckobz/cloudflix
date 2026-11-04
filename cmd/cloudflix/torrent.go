@@ -40,6 +40,7 @@ type entry struct {
  inspectingFiles bool
  inspectedFilesOnce bool
  fileInspectionError string
+ fileInspectionCancel chan struct{}
 }
 type engine struct{
  mu sync.Mutex
@@ -375,6 +376,11 @@ func (e *engine) action(hash,action string)error{
   // untrusted metadata paths: they may overlap other valid torrents.
   item.fileManifest=nil
   item.fileInspectionError=""
+  if item.fileInspectionCancel!=nil {
+   close(item.fileInspectionCancel)
+   item.fileInspectionCancel=nil
+   if e.activeFileInspections>0{e.activeFileInspections--}
+  }
   item.inspectingFiles=false
   delete(e.entries,hash)
  default:return errors.New("unknown action")

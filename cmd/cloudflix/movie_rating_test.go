@@ -1,7 +1,6 @@
 package main
 
 import (
- "database/sql"
  "math"
  "strings"
  "testing"
@@ -39,4 +38,3 @@ func TestTMDBMovieParser(t *testing.T){
   }
  }
 }
-var _ *sql.DB

@@ -271,76 +271,63 @@
    {#if notice}<div class="toast success"><CheckCircle2 size={16}/>{notice}<button onclick={()=>notice=''} aria-label="Dismiss"><X size={16}/></button></div>{/if}
    {#if error}<div class="toast error"><AlertCircle size={16}/>{error}<button onclick={()=>error=''} aria-label="Dismiss"><X size={16}/></button></div>{/if}
    {#if page==='home'}
-    <section class="film-library" aria-label="Your downloaded movie library">
-     <div class="library-masthead">
-      <div class="library-intro">
-       <span class="library-kicker"><span class="kicker-mark"></span> PRIVATE SCREENING ROOM <span class="kicker-index">/ YOUR COLLECTION</span></span>
-       <h1>The collection<span class="title-period">.</span></h1>
-       <p>{libraryView.total} {libraryView.total===1?'film':'films'} ready for your next movie night.</p>
+    <section class="movie-library" aria-label="Downloaded movies">
+     <div class="movie-library-toolbar">
+      <div class="movie-library-heading">
+       <h1>Movies</h1>
+       <span class="movie-library-count">{libraryView.total} {libraryView.total===1?'movie':'movies'}</span>
       </div>
-      <div class="library-controls">
-       <label class="cinema-search">
-        <Search size={18}/>
-        <input value={search} oninput={(event)=>{search=event.currentTarget.value;libraryPage=1}} placeholder="Find a movie or year" aria-label="Search downloaded movies"/>
-        {#if search.trim()}<button type="button" aria-label="Clear search" onclick={()=>{search='';libraryPage=1}}><X size={15}/></button>{/if}
-       </label>
-      </div>
-     </div>
-     <div class="shelf-divider">
-      <span><span class="shelf-light"></span> ALL FILMS</span>
-      <div class="shelf-line"></div>
-      <span class="shelf-count">{String(libraryView.total).padStart(2,'0')} TITLES</span>
+      <label class="movie-library-search">
+       <Search size={17}/>
+       <input value={search} oninput={(event)=>{search=event.currentTarget.value;libraryPage=1}} placeholder="Search movies" aria-label="Search downloaded movies"/>
+       {#if search.trim()}
+        <button type="button" aria-label="Clear search" onclick={()=>{search='';libraryPage=1}}><X size={15}/></button>
+       {/if}
+      </label>
      </div>
      {#if libraryView.movies.length}
-      <div class="cinema-wall">
-       {#each libraryView.movies as movie,i (movie.hash)}
-        <button class="cinema-tile" type="button" title={'Play '+movie.title} onclick={()=>openMovie(movie)}>
-         <div class="cinema-poster">
+      <div class="movie-library-grid">
+       {#each libraryView.movies as movie (movie.hash)}
+        <button type="button" class="movie-library-card" title={'Play '+movie.title} onclick={()=>openMovie(movie)}>
+         <div class="movie-library-poster">
           {#if movie.poster}
            <img src={poster(movie.poster)} alt={'Poster for '+movie.title} loading="lazy"/>
           {:else}
-           <div class="cinema-art-placeholder" aria-hidden="true"><FilmClap size={43} strokeWidth={1.1}/><span>CLOUDFLIX</span></div>
+           <div class="movie-library-placeholder"><Film size={34} strokeWidth={1.5}/></div>
           {/if}
-          <span class="film-corner-number">{String((libraryView.page-1)*10+i+1).padStart(2,'0')}</span>
-          <span class="film-poster-rating"><Star size={13} fill={movie.rating>0?'currentColor':'none'} /> {movie.rating>0?movie.rating.toFixed(1):'N/A'}</span>
-          <span class="film-play-ring" aria-hidden="true"><Play size={23} fill="currentColor" strokeWidth={1.2}/></span>
-          <span class="film-watch-label">PLAY MOVIE <span aria-hidden="true">↗</span></span>
+          <span class="movie-library-play" aria-hidden="true"><Play size={22} fill="currentColor"/></span>
          </div>
-         <div class="cinema-tile-copy">
-          <h3>{movie.title}</h3>
-          <span>{movie.year||'YEAR UNKNOWN'}</span>
+         <h3>{movie.title}</h3>
+         <div class="movie-library-meta">
+          <span>{movie.year||'Unknown year'}</span>
+          <span class="movie-library-rating"><Star size={13} fill={movie.rating>0?'currentColor':'none'}/> {movie.rating>0?movie.rating.toFixed(1):'N/A'}</span>
          </div>
         </button>
        {/each}
       </div>
-      <nav class="library-pagination cinema-pagination" aria-label="Movie pages">
-       <span class="pagination-summary">{String(libraryView.from).padStart(2,'0')}—{String(libraryView.to).padStart(2,'0')} <span class="pagination-slash">/</span> {String(libraryView.total).padStart(2,'0')} FILMS</span>
+      <nav class="movie-library-pagination" aria-label="Movie pages">
+       <span>Showing {libraryView.from}–{libraryView.to} of {libraryView.total}</span>
        {#if libraryView.totalPages>1}
-        <div class="pagination-buttons">
-         <button type="button" aria-label="Previous page" disabled={libraryView.page===1} onclick={()=>libraryPage=libraryView.page-1}><ChevronLeft size={17}/></button>
+        <div class="movie-pagination-buttons">
+         <button type="button" aria-label="Previous page" disabled={libraryView.page===1} onclick={()=>libraryPage=libraryView.page-1}><ChevronLeft size={16}/></button>
          {#each libraryView.pages as number}
-          <button type="button" class:current={libraryView.page===number} aria-label={'Page '+number} aria-current={libraryView.page===number?'page':undefined} onclick={()=>libraryPage=number}>{number}</button>
+          <button type="button" class:active={libraryView.page===number} aria-label={'Page '+number} aria-current={libraryView.page===number?'page':undefined} onclick={()=>libraryPage=number}>{number}</button>
          {/each}
-         <button type="button" aria-label="Next page" disabled={libraryView.page===libraryView.totalPages} onclick={()=>libraryPage=libraryView.page+1}><ChevronRight size={17}/></button>
+         <button type="button" aria-label="Next page" disabled={libraryView.page===libraryView.totalPages} onclick={()=>libraryPage=libraryView.page+1}><ChevronRight size={16}/></button>
         </div>
        {/if}
       </nav>
      {:else}
-      <div class="cinema-blank">
-       <div class="cinema-blank-art" aria-hidden="true">
-        <div class="blank-film blank-film-back"></div>
-        <div class="blank-film blank-film-front"><FilmClap size={42} strokeWidth={1.1}/></div>
-       </div>
-       <div class="cinema-blank-copy">
-        <span class="library-kicker">THE SCREEN IS WAITING</span>
-        <h2>{search.trim()?'No films found.':'Every great collection starts with a film.'}</h2>
-        <p>{search.trim()?'Try a different movie title or release year.':'Your completed MP4 downloads will find their home here, with artwork, ratings and subtitles.'}</p>
-        {#if search.trim()}
-         <button class="cinema-empty-button" onclick={()=>{search='';libraryPage=1}}>Clear search <span aria-hidden="true">↗</span></button>
-        {:else}
-         <button class="cinema-empty-button" onclick={()=>navigate('downloader')}>Add a movie <span aria-hidden="true">↗</span></button>
-        {/if}
-       </div>
+      <div class="movie-library-empty">
+       {#if search.trim()}
+        <h2>No movies found</h2>
+        <p>Try a different title or year.</p>
+        <button type="button" onclick={()=>{search='';libraryPage=1}}>Clear search</button>
+       {:else}
+        <h2>No movies yet</h2>
+        <p>Your completed movie downloads will appear here.</p>
+        <button type="button" onclick={()=>navigate('downloader')}>Open Downloader</button>
+       {/if}
       </div>
      {/if}
     </section>

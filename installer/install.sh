@@ -25,6 +25,14 @@ command -v curl >/dev/null || command -v wget >/dev/null || die "curl or wget is
 [[ "$VERSION" == "latest" || "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][a-zA-Z0-9.]+)?$ ]] || die "Invalid CLOUDFLIX_VERSION"
 [[ ! -e "$SERVICE" ]] || die "Cloudflix is installed. Use update.sh instead."
 command -v runuser >/dev/null || die "runuser is required"
+command -v ss >/dev/null || die "ss (iproute2) is required to check port 80."
+# Fail before prompting for a PIN or making any service or filesystem changes.
+port80_listeners="$(ss -H -ltnp '( sport = :80 )')" || die "Could not inspect TCP port 80."
+if [[ -n "$port80_listeners" ]];then
+  printf '\n[cloudflix] TCP port 80 is already in use by:\n%s\n\n' "$port80_listeners" >&2
+  die "Stop or reconfigure the process above and retry. Nothing was installed."
+fi
+info "Port 80 is available."
 
 # wget/curl uses stdin for the script. Always prompt through the controlling terminal.
 [[ -r /dev/tty && -w /dev/tty ]] || die "Interactive terminal required to choose a six-digit PIN"
@@ -82,7 +90,7 @@ fi
 unset PIN
 if [[ ! -f "$CONFIG" ]];then
  # We do not log or print the secret.
- (umask 077; printf 'CLOUDFLIX_DATA_DIR=/var/lib/cloudflix\nCLOUDFLIX_LISTEN=0.0.0.0:3000\n' > "$CONFIG")
+ (umask 077; printf 'CLOUDFLIX_DATA_DIR=/var/lib/cloudflix\nCLOUDFLIX_LISTEN=0.0.0.0:80\n' > "$CONFIG")
 fi
 chmod 0600 "$CONFIG"
 cat > "$SERVICE" <<'UNIT'
@@ -101,6 +109,8 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=35
 NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
@@ -113,8 +123,22 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable --now cloudflix.service
-info "Cloudflix is listening on all VPS interfaces at port 3000."
-info "Open http://YOUR_VPS_IP:3000 and sign in with your 6-digit PIN."
-info "Make sure your VPS firewall/provider allows TCP port 3000 from your trusted IP."
+healthy=0
+for i in $(seq 1 15);do
+  if command -v curl >/dev/null;then
+    if curl -fsS --max-time 2 http://127.0.0.1/api/health >/dev/null 2>&1;then healthy=1;break;fi
+  else
+    if wget -q --timeout=2 -O /dev/null http://127.0.0.1/api/health;then healthy=1;break;fi
+  fi
+  if ! systemctl is-active --quiet cloudflix.service;then break;fi
+  sleep 1
+done
+if [[ "$healthy" != "1" ]];then
+  systemctl status cloudflix.service --no-pager >&2 || true
+  die "Cloudflix did not start on port 80. Check: journalctl -u cloudflix -n 80"
+fi
+info "Cloudflix is listening on all VPS interfaces at port 80."
+info "Open http://YOUR_VPS_IP and sign in with your 6-digit PIN."
+info "Make sure your VPS firewall/provider allows TCP port 80 from your trusted IP."
 info "WARNING: HTTP is unencrypted; the PIN, session cookies and TMDB token may be intercepted."
 info "Completed. systemctl status cloudflix"

@@ -10,6 +10,7 @@
  type Movie = {hash:string,title:string,year:string,genre:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
  type InspectedFile = {path:string,size:number,selected:boolean}
  type FileInspection = {available:boolean,fetching?:boolean,files:InspectedFile[],total:number,truncated?:boolean,rejected:boolean,reason:string,message?:string}
+ type MKVStatus = {state:string,message?:string,videoURL?:string,subtitles?:{index:number,language:string,label:string,url:string}[]}
  let page = $state<'home'|'downloader'|'settings'>(typeof window!=='undefined'&&window.location.pathname==='/settings'?'settings':typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
  let auth = $state<'loading'|'setup'|'login'|'ready'>('loading')
  let pin = $state('')
@@ -29,6 +30,8 @@
  let fileInspectionPolling=false
  let playerVideo = $state<HTMLVideoElement|null>(null)
  let playbackError = $state('')
+ let mkvStatus = $state<MKVStatus|null>(null)
+ let mkvPollActive=false
  let ccEnabled = $state(false)
  let selectedSubtitle = $state(0)
  let noticeTimer:ReturnType<typeof setTimeout>|undefined
@@ -67,6 +70,14 @@
  const libraryView = $derived(selectLibraryPage(movies,search,libraryPage,10))
  const queueItems = $derived(movies.filter(m=>queueFilter==='all'||(queueFilter==='active'&&m.status!=='completed'&&m.status!=='rejected')||(queueFilter==='completed'&&m.status==='completed')))
  const selectedPlayback = $derived(selected?findPlayback(selected.files):{video:null,subtitles:[]})
+ const selectedIsMKV = $derived(Boolean(selectedPlayback.video?.path.toLowerCase().endsWith('.mkv')))
+ const playbackVideoURL = $derived(selectedIsMKV?mkvStatus?.videoURL:null)
+ const playbackTracks = $derived([
+   ...selectedPlayback.subtitles.map(s=>({path:s.path,label:s.label,language:s.language,src:selected?mediaURL(selected.hash,s.path):''})),
+   ...(selectedIsMKV&&mkvStatus?.state==='ready'
+      ?(mkvStatus.subtitles||[]).map(t=>({path:'embedded:'+t.index,label:t.label,language:t.language,src:t.url}))
+      :[])
+ ])
  const call = async (path:string,method='GET',data?:object)=>{
    let response:Response
    try{
@@ -92,27 +103,53 @@
    applySubtitleSelection(playerVideo,ccEnabled?selectedSubtitle:-1)
  }
  const toggleCaptions=()=>{
-   if(!selectedPlayback.subtitles.length)return
+   if(!playbackTracks.length)return
    ccEnabled=!ccEnabled
    syncSubtitleTracks()
  }
  const selectCaptionTrack=(index:number)=>{
-   if(!Number.isInteger(index)||index<0||index>=selectedPlayback.subtitles.length)return
+   if(!Number.isInteger(index)||index<0||index>=playbackTracks.length)return
    selectedSubtitle=index
    ccEnabled=true
    syncSubtitleTracks()
+ }
+ const loadMKVStatus=async(hash:string,path:string)=>{
+   if(mkvPollActive)return
+   mkvPollActive=true
+   try{
+     const data=await call('playback/'+encodeURIComponent(hash)+'/status?path='+encodeURIComponent(path))
+     if(selected?.hash===hash && findPlayback(selected.files).video?.path===path)mkvStatus=data as MKVStatus
+   }catch(e){
+     if(selected?.hash===hash)mkvStatus={state:'error',message:(e as Error).message}
+   }finally{mkvPollActive=false}
+ }
+ const prepareMKV=async(movie:Movie)=>{
+   const file=findPlayback(movie.files).video
+   if(!file||!file.path.toLowerCase().endsWith('.mkv'))return
+   mkvStatus={state:'queued',message:'Preparing MKV playback…'}
+   try{
+     const data=await call('playback/'+encodeURIComponent(movie.hash)+'/prepare','POST',{path:file.path})
+     if(selected?.hash===movie.hash)mkvStatus=data as MKVStatus
+   }catch(e){
+     if(selected?.hash===movie.hash)mkvStatus={state:'error',message:(e as Error).message}
+   }
  }
  const openMovie=(movie:Movie)=>{
    playbackError=''
    playerVideo=null
    selectedSubtitle=0
    ccEnabled=false
+   mkvStatus=null
    selected=movie
+   if(movie.status==='completed'&&findPlayback(movie.files).video?.path.toLowerCase().endsWith('.mkv')){
+     void prepareMKV(movie)
+   }
  }
  const closeMovie=()=>{
    playerVideo?.pause()
    playerVideo=null
    selected=null
+   mkvStatus=null
    selectedSubtitle=0
    ccEnabled=false
    playbackError=''
@@ -254,7 +291,14 @@
        void loadFileList(fileViewer.hash,false,true)
      }
    },2000)
-   return ()=>{live?.close();clearInterval(updaterPoll);clearInterval(fileInspectionPoll);if(noticeTimer!==undefined)clearTimeout(noticeTimer);window.removeEventListener('popstate',handleBack)}
+   const mkvPlaybackPoll=setInterval(()=>{
+     if(auth==='ready'&&selected?.status==='completed'&&selectedIsMKV &&
+        (mkvStatus?.state==='queued'||mkvStatus?.state==='processing')){
+       const file=selectedPlayback.video
+       if(file)void loadMKVStatus(selected.hash,file.path)
+     }
+   },2500)
+   return ()=>{live?.close();clearInterval(updaterPoll);clearInterval(fileInspectionPoll);clearInterval(mkvPlaybackPoll);if(noticeTimer!==undefined)clearTimeout(noticeTimer);window.removeEventListener('popstate',handleBack)}
  })
  const authenticate=async()=>{
    error=''

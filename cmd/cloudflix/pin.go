@@ -24,6 +24,7 @@ const maxPinFailures = 5
 // without destroying user records. New values always contain a hash of a six-digit PIN.
 func ensurePINSchema(db *sql.DB) error {
  if _,err:=db.Exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY CHECK(id=1), password_hash TEXT NOT NULL, pin_enabled INTEGER NOT NULL DEFAULT 0)");err!=nil{return err}
+ if _,err:=db.Exec("CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)");err!=nil{return err}
  rows,err:=db.Query("PRAGMA table_info(users)")
  if err!=nil{return err}
  hasPIN:=false
@@ -78,7 +79,7 @@ func pinCommand(args []string) error {
  if err!=nil{return err}
  defer tx.Rollback()
  if _,err=tx.Exec("INSERT INTO users(id,password_hash,pin_enabled) VALUES(1,?,1) ON CONFLICT(id) DO UPDATE SET password_hash=excluded.password_hash,pin_enabled=1",hash);err!=nil{return err}
- if _,err=tx.Exec("DELETE FROM sessions");err!=nil && !strings.Contains(err.Error(),"no such table"){return err}
+ if _,err=tx.Exec("DELETE FROM sessions");err!=nil{return err}
  if _,err=tx.Exec("UPDATE pin_attempts SET failures=0,locked_until=0 WHERE id=1");err!=nil{return err}
  if err=tx.Commit();err!=nil{return err}
  fmt.Println("Cloudflix access PIN configured; existing sessions revoked")

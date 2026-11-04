@@ -25,3 +25,14 @@ test('queued notification automatically expires',()=>{
  assert.match(component,/noticeTimer=setTimeout\(\(\)=>\{notice='';noticeTimer=undefined\},4200\)/)
  assert.match(component,/notify\('Magnet queued/)
 })
+
+test('theater has just a compact title, video, subtitle info and fullscreen action',()=>{
+ assert.match(footer,/class="cinema-player-heading"/)
+ assert.match(footer,/class="cinema-video-frame"/)
+ assert.match(footer,/class="cinema-player-toolbar"/)
+ assert.match(footer,/class="cinema-fullscreen-button"/)
+ assert.doesNotMatch(footer,/FILES ON YOUR SERVER/)
+ assert.doesNotMatch(footer,/class="cinema-player-files"/)
+ assert.doesNotMatch(footer,/NOW SHOWING/)
+ assert.doesNotMatch(footer,/READY TO WATCH/)
+})

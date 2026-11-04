@@ -38,6 +38,10 @@ type application struct {
 }
 
 func main() {
+ if len(os.Args)>1 && os.Args[1]=="pin"{
+  if err:=pinCommand(os.Args[2:]);err!=nil{log.Fatal(err)}
+  return
+ }
  dataDir:=env("CLOUDFLIX_DATA_DIR","./data")
  if err:=os.MkdirAll(dataDir,0700);err!=nil{log.Fatal(err)}
  dataDir,err:=filepath.Abs(dataDir);if err!=nil{log.Fatal(err)}
@@ -55,6 +59,7 @@ func main() {
  "CREATE TABLE IF NOT EXISTS torrents (hash TEXT PRIMARY KEY, magnet TEXT NOT NULL, paused INTEGER NOT NULL DEFAULT 0, title TEXT NOT NULL DEFAULT '', year TEXT NOT NULL DEFAULT '', poster TEXT NOT NULL DEFAULT '', backdrop TEXT NOT NULL DEFAULT '', looked_up INTEGER NOT NULL DEFAULT 0)",
  }
  for _,statement:=range statements {if _,err=db.Exec(statement);err!=nil{log.Fatal(err)}}
+ if err:=ensurePINSchema(db);err!=nil{log.Fatal(err)}
  a:=&application{db:db,dataDir:dataDir,tmdbKey:os.Getenv("TMDB_API_KEY"),attempts:make(map[string][]time.Time)}
  a.engine,err=newEngine(downloads,db,a.tmdbKey)
  if err!=nil{log.Fatal(err)}
@@ -64,7 +69,6 @@ func main() {
  mux:=http.NewServeMux()
  mux.HandleFunc("GET /api/health",func(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]any{"status":"ok","version":version})})
  mux.HandleFunc("GET /api/auth/status",a.authStatus)
- mux.HandleFunc("POST /api/auth/setup",a.setup)
  mux.HandleFunc("POST /api/auth/login",a.login)
  mux.HandleFunc("POST /api/auth/logout",a.require(a.logout))
  mux.HandleFunc("GET /api/state",a.require(a.state))
@@ -116,8 +120,7 @@ func readJSON(w http.ResponseWriter,r *http.Request,dst any)bool{
 }
 func randomToken()(string,error){data:=make([]byte,32);if _,err:=rand.Read(data);err!=nil{return "",err};return hex.EncodeToString(data),nil}
 func hashToken(token string)string{sum:=sha256.Sum256([]byte(token));return hex.EncodeToString(sum[:])}
-func (a *application) installed()bool{var id int;return a.db.QueryRow("SELECT id FROM users WHERE id=1").Scan(&id)==nil}
-func (a *application) authStatus(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]bool{"setupRequired":!a.installed(),"authenticated":a.authenticated(r)})}
+func (a *application) authStatus(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]bool{"setupRequired":!pinConfigured(a.db),"authenticated":a.authenticated(r)&&pinConfigured(a.db)})}
 func (a *application) authenticated(r *http.Request)bool{
  cookie,err:=r.Cookie("cloudflix_session")
  if err!=nil || len(cookie.Value)!=64{return false}
@@ -127,22 +130,7 @@ func (a *application) authenticated(r *http.Request)bool{
  return subtle.ConstantTimeCompare([]byte(stored),[]byte(sum))==1
 }
 func (a *application) require(h http.HandlerFunc)http.HandlerFunc{
- return func(w http.ResponseWriter,r *http.Request){if !a.authenticated(r){fail(w,401,"authentication required");return};h(w,r)}
-}
-func (a *application) setup(w http.ResponseWriter,r *http.Request){
- var req map[string]string
- if !readJSON(w,r,&req){return}
- password:=req["password"]
- if len(password)<12 || len(password)>256{fail(w,400,"password must be 12 to 256 characters");return}
- a.authMu.Lock();defer a.authMu.Unlock()
- if a.installed(){fail(w,409,"already configured");return}
- hash,err:=argon2id.CreateHash(password,argon2id.DefaultParams)
- if err!=nil{fail(w,500,"cannot initialize password");return}
- result,err:=a.db.Exec("INSERT OR IGNORE INTO users(id,password_hash) VALUES(1,?)",hash)
- if err!=nil{fail(w,500,"cannot initialize database");return}
- affected,_:=result.RowsAffected()
- if affected!=1{fail(w,409,"already configured");return}
- a.issueSession(w,r)
+ return func(w http.ResponseWriter,r *http.Request){if !pinConfigured(a.db)||!a.authenticated(r){fail(w,401,"PIN authentication required");return};h(w,r)}
 }
 func ipAddress(r *http.Request)string{host,_,err:=net.SplitHostPort(r.RemoteAddr);if err!=nil{return r.RemoteAddr};return host}
 func (a *application) allowLogin(ip string)bool{
@@ -154,13 +142,33 @@ func (a *application) allowLogin(ip string)bool{
  a.attempts[ip]=append(recent,now);return true
 }
 func (a *application) login(w http.ResponseWriter,r *http.Request){
- if !a.allowLogin(ipAddress(r)){fail(w,429,"too many attempts");return}
- var req map[string]string
+ if !a.allowLogin(ipAddress(r)){w.Header().Set("Retry-After","600");fail(w,429,"Too many attempts. Try again later.");return}
+ var req struct{PIN string `json:"pin"`}
  if !readJSON(w,r,&req){return}
- var hash string
- if err:=a.db.QueryRow("SELECT password_hash FROM users WHERE id=1").Scan(&hash);err!=nil{fail(w,401,"invalid credentials");return}
- ok,err:=argon2id.ComparePasswordAndHash(req["password"],hash)
- if err!=nil || !ok{fail(w,401,"invalid credentials");return}
+ a.authMu.Lock()
+ defer a.authMu.Unlock()
+ if !pinConfigured(a.db){fail(w,503,"Access PIN must be configured on the VPS");return}
+ locked,until,err:=a.pinLocked()
+ if err!=nil{fail(w,500,"Authentication unavailable");return}
+ if locked{
+  w.Header().Set("Retry-After",fmt.Sprint(until-time.Now().Unix()))
+  fail(w,429,"Too many incorrect PIN attempts. Try again in 15 minutes.")
+  return
+ }
+ valid:=false
+ if pinPattern.MatchString(req.PIN){
+  var hash string
+  if err:=a.db.QueryRow("SELECT password_hash FROM users WHERE id=1 AND pin_enabled=1").Scan(&hash);err==nil{
+   matched,err:=argon2id.ComparePasswordAndHash(req.PIN,hash)
+   valid=err==nil && matched
+  }
+ }
+ if !valid{
+  if err:=a.pinFailure();err!=nil{fail(w,500,"Authentication unavailable");return}
+  fail(w,401,"Incorrect PIN")
+  return
+ }
+ if err:=a.clearPinFailures();err!=nil{fail(w,500,"Authentication unavailable");return}
  a.issueSession(w,r)
 }
 func (a *application) issueSession(w http.ResponseWriter,r *http.Request){

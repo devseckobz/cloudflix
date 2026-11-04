@@ -216,7 +216,7 @@ fi
 info "Update completed. Movies, PIN and TMDB settings preserved."
 # Use only root-owned helper scripts for browser-triggered updates.
 # A setup failure must not roll back an otherwise healthy application.
-if fetch "https://raw.githubusercontent.com/$REPO/main/installer/setup-web-updater.sh" "$work/setup-web-updater.sh";then
+if [[ "${CLOUDFLIX_NONINTERACTIVE:-0}" != "1" ]] && fetch "https://raw.githubusercontent.com/$REPO/main/installer/setup-web-updater.sh" "$work/setup-web-updater.sh";then
  if ! /bin/bash "$work/setup-web-updater.sh";then
   info "WARNING: Could not enable the Settings updater. The one-line updater still works."
  fi

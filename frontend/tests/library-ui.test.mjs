@@ -32,12 +32,16 @@ test('Home shows completed movie cards with title, year and TMDB ratings',()=>{
  assert.match(home,/openMovie\(movie\)/)
 })
 
-test('Home has real next, previous, and numbered pages',()=>{
- assert.match(home,/libraryView\.totalPages/)
- assert.match(home,/libraryView\.pages/)
- assert.match(home,/libraryPage=libraryView\.page-1/)
- assert.match(home,/libraryPage=libraryView\.page\+1/)
- assert.match(home,/libraryPage=number/)
+test('Home has real previous, next, and numbered pages in the top navigation',()=>{
+ assert.match(topbar,/class="top-library-pagination"/)
+ assert.match(topbar,/libraryView\.totalPages/)
+ assert.match(topbar,/libraryView\.pages/)
+ assert.match(topbar,/libraryPage=libraryView\.page-1/)
+ assert.match(topbar,/libraryPage=libraryView\.page\+1/)
+ assert.match(topbar,/libraryPage=number/)
+ assert.doesNotMatch(home,/movie-pagination-buttons|movie-library-pagination/)
+ assert.match(home,/class="library-results-count"/)
+ assert.match(home,/Showing \{libraryView\.from\}–\{libraryView\.to\} of \{libraryView\.total\}/)
 })
 
 test('Stats moved to Downloader and sidebar has no extra library section',()=>{

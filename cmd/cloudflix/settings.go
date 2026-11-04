@@ -33,12 +33,49 @@ func (a *application) getSettings(w http.ResponseWriter,r *http.Request) {
  respond(w,http.StatusOK,map[string]any{"tmdbConfigured":configured})
 }
 
-var tmdbBearerPattern=regexp.MustCompile(`^[A-Za-z0-9_.-]{16,2048}$`)
+var tmdbBearerPattern=regexp.MustCompile(`^[A-Za-z0-9_.-]+package main
+
+import (
+ "context"
+ "database/sql"
+ "errors"
+ "io"
+ "net/http"
+ "regexp"
+ "strings"
+ "time"
+)
+
+// The application stores only its owner's TMDB credentials in the local
+// restricted-permission SQLite database. Never return credentials to browsers
+// or write them to logs.
+func ensureSettingsSchema(db *sql.DB) error {
+ _, err := db.Exec("CREATE TABLE IF NOT EXISTS app_settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
+ return err
+}
+
+func loadTMDBKey(db *sql.DB, envFallback string) (string,error) {
+ var key string
+ err:=db.QueryRow("SELECT value FROM app_settings WHERE name='tmdb_api_key'").Scan(&key)
+ if errors.Is(err,sql.ErrNoRows) {return envFallback,nil}
+ return key,err
+}
+
+func (a *application) getSettings(w http.ResponseWriter,r *http.Request) {
+ a.engine.mu.Lock()
+ configured:=a.engine.tmdbKey!=""
+ a.engine.mu.Unlock()
+ respond(w,http.StatusOK,map[string]any{"tmdbConfigured":configured})
+}
+
+var tmdbBearerPattern=)
 
 // TMDB API Read Access Token: authenticated server-side against a fixed HTTPS
 // origin before persisting, without redirect following or credential logging.
+func validTMDBToken(key string)bool{return len(key)>=16 && len(key)<=2048 && tmdbBearerPattern.MatchString(key)}
+
 func validateTMDBBearer(ctx context.Context,key string) error {
- if !tmdbBearerPattern.MatchString(key) {return errors.New("use a TMDB API Read Access Token")}
+ if !validTMDBToken(key) {return errors.New("use a TMDB API Read Access Token")}
  reqCtx,cancel:=context.WithTimeout(ctx,10*time.Second)
  defer cancel()
  req,err:=http.NewRequestWithContext(reqCtx,"GET","https://api.themoviedb.org/3/authentication",nil)

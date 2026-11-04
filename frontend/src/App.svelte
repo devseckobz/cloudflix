@@ -741,8 +741,9 @@
      <button class="cinema-player-close" onclick={closeMovie} aria-label="Close player" title="Close"><X size={20}/></button>
     </header>
     {#if selected.status==='completed' && selectedPlayback.video}
+     {#if !selectedIsMKV || mkvStatus?.state==='ready'}
      <div class="cinema-video-frame">
-      {#key selected.hash+selectedPlayback.video.path}
+      {#key selected.hash+selectedPlayback.video.path+(playbackVideoURL||'')}
        <video
         bind:this={playerVideo}
         class="cinema-video"
@@ -752,12 +753,12 @@
         preload="metadata"
         onloadedmetadata={syncSubtitleTracks}
         poster={selected.backdrop?backdrop(selected.backdrop):selected.poster?poster(selected.poster):undefined}
-        onerror={()=>playbackError='Your browser cannot play this MP4 file. Try downloading it or use a browser that supports its video codec.'}
+        onerror={()=>playbackError='Your browser cannot decode this video. Check that FFmpeg has prepared a compatible MP4.'}
         aria-label={'Playback of '+selected.title}
        >
-        <source src={mediaURL(selected.hash,selectedPlayback.video.path)} type="video/mp4"/>
-        {#each selectedPlayback.subtitles as sub,i (sub.path)}
-         <track kind="subtitles" src={mediaURL(selected.hash,sub.path)} srclang={sub.language} label={sub.label} onload={syncSubtitleTracks}/>
+        <source src={selectedIsMKV?(playbackVideoURL||''):mediaURL(selected.hash,selectedPlayback.video.path)} type="video/mp4"/>
+        {#each playbackTracks as sub,i (sub.path)}
+         <track kind="subtitles" src={sub.src} srclang={sub.language} label={sub.label} onload={syncSubtitleTracks}/>
         {/each}
         Your browser does not support HTML5 video.
        </video>
@@ -767,13 +768,13 @@
      <div class="cinema-player-toolbar">
       <div class="cinema-player-hint">
        <span>{formatBytes(selectedPlayback.video.size)}</span>
-       {#if selectedPlayback.subtitles.length}
+       {#if playbackTracks.length}
         <span class="player-toolbar-sep" aria-hidden="true">·</span>
-        <span>{selectedPlayback.subtitles.length} {selectedPlayback.subtitles.length===1?'subtitle':'subtitles'} available</span>
+        <span>{playbackTracks.length} {playbackTracks.length===1?'subtitle':'subtitles'} available</span>
        {/if}
       </div>
       <div class="cinema-player-actions">
-       {#if selectedPlayback.subtitles.length}
+       {#if playbackTracks.length}
         <button
          class="cinema-cc-button"
          class:active={ccEnabled}
@@ -785,7 +786,7 @@
         >CC</button>
         {#if ccEnabled}
          <div class="cinema-caption-languages" role="group" aria-label="Available subtitles">
-          {#each selectedPlayback.subtitles as sub,i (sub.path)}
+          {#each playbackTracks as sub,i (sub.path)}
            <button
             type="button"
             class:active={selectedSubtitle===i}
@@ -800,6 +801,21 @@
        <button class="cinema-fullscreen-button" type="button" onclick={enterFullscreen}><Maximize2 size={17}/> Fullscreen</button>
       </div>
      </div>
+     {:else}
+      <div class="cinema-player-preparing" role="status">
+       {#if mkvStatus?.state==='error'}
+        <AlertCircle size={32}/>
+        <h3>Unable to prepare MKV</h3>
+        <p>{mkvStatus.message||'Playback preparation failed.'}</p>
+        <button type="button" onclick={()=>selected&&prepareMKV(selected)}>Try again</button>
+       {:else}
+        <LoaderCircle size={34} class="spin"/>
+        <h3>Preparing MKV for playback</h3>
+        <p>{mkvStatus?.message||'This movie needs conversion to a browser-compatible format.'}</p>
+        <span>Embedded text subtitles will be available in CC when ready.</span>
+       {/if}
+      </div>
+     {/if}
     {:else}
      <div class="cinema-player-unavailable">
       <MonitorPlay size={40} strokeWidth={1.2}/>

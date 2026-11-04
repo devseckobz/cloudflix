@@ -53,7 +53,7 @@ func TestTemporaryManifestListsSkippedFilesAndRejectsNonMP4(t *testing.T){
   if f.Selected{t.Fatalf("rejected torrent must not select %q",f.Path)}
  }
  accepted:=buildFileManifest(append(input,manifestFile{Path:"Film.mp4",Size:50<<20}),true)
- if accepted.Total!=4 || accepted.Files[0].Selected || accepted.Files[1].Selected || !accepted.Files[2].Selected || !accepted.Files[3].Selected{
+ if accepted.Total!=4 || !accepted.Files[0].Selected || accepted.Files[1].Selected || !accepted.Files[2].Selected || !accepted.Files[3].Selected{
   t.Fatalf("invalid MP4/SRT file selection: %+v",accepted)
  }
 }

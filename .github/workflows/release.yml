@@ -11,7 +11,7 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: cloudflix-release
+  group: cloudflix-release-${{ github.sha }}
   cancel-in-progress: true
 jobs:
   release:

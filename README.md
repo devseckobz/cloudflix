@@ -28,7 +28,9 @@ Cloudflix inspects magnet metadata **before downloading content**. Magnets witho
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/update.sh | sudo bash
 ```
 
-Updates use verified binaries from [GitHub Releases](https://github.com/devseckobz/cloudflix/releases). The updater migrates previous default port-3000 installations to port 80 and preserves movies, PIN, and settings. It exits if another service already owns port 80.
+Updates download GitHub Release binaries and verify their SHA-256 checksums before replacing the app. The updater preserves movies, PIN and settings, migrates legacy port-3000 installations to port 80, and rolls back the binary if startup fails.
+
+You can also go to **Settings → Software Updates → Check for updates → Update now** to install future releases from the browser. The first one-line update installs the restricted systemd helper needed for in-app updates; no root password or arbitrary shell access is exposed in the UI. Cloudflix briefly restarts during an update.
 
 ## Settings
 

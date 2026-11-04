@@ -26,8 +26,34 @@ fetch "$BASE/$ASSET" "$work/$ASSET"
 fetch "$BASE/$ASSET.sha256" "$work/$ASSET.sha256"
 (cd "$work";sha256sum -c "$ASSET.sha256") || die "Checksum mismatch: update aborted"
 tar -xzf "$work/$ASSET" -C "$work" cloudflix
+install -m 0755 "$work/cloudflix" "$work/cloudflix.candidate"
+command -v runuser >/dev/null || die "runuser is required for PIN configuration"
+# Detect legacy installs that still have password authentication. Never reset
+# an already configured PIN during a normal update.
+pin_status=0
+runuser -u cloudflix -- env CLOUDFLIX_DATA_DIR=/var/lib/cloudflix "$work/cloudflix.candidate" pin status >/dev/null 2>&1 || pin_status=$?
+if [[ "$pin_status" == "3" ]];then
+  [[ -r /dev/tty && -w /dev/tty ]] || die "Interactive terminal required to migrate existing password to a 6-digit PIN"
+  info "Your existing Cloudflix login will be replaced by a 6-digit PIN."
+  while true;do
+    IFS= read -r -s -p "Choose Cloudflix 6-digit PIN: " PIN < /dev/tty || die "Cannot read PIN"
+    printf '\n' > /dev/tty
+    if [[ ! "$PIN" =~ ^[0-9]{6}$ ]];then printf 'PIN must contain six digits.\n' > /dev/tty;continue;fi
+    IFS= read -r -s -p "Confirm PIN: " PIN_CONFIRM < /dev/tty || die "Cannot confirm PIN"
+    printf '\n' > /dev/tty
+    if [[ "$PIN" == "$PIN_CONFIRM" ]];then break;fi
+    printf 'PINs do not match.\n' > /dev/tty
+  done
+  if ! printf '%s\n' "$PIN" | runuser -u cloudflix -- env CLOUDFLIX_DATA_DIR=/var/lib/cloudflix "$work/cloudflix.candidate" pin set;then
+    unset PIN PIN_CONFIRM
+    die "Cannot set the Cloudflix PIN; binary not replaced"
+  fi
+  unset PIN PIN_CONFIRM
+elif [[ "$pin_status" != "0" ]];then
+  die "Cannot inspect existing Cloudflix access settings (PIN status code $pin_status). Update aborted."
+fi
 install -m 0755 "$BIN" "$work/cloudflix.previous"
-install -m 0755 "$work/cloudflix" "$BIN.new"
+install -m 0755 "$work/cloudflix.candidate" "$BIN.new"
 mv -f "$BIN.new" "$BIN"
 info "Restarting service"
 if ! systemctl restart cloudflix;then
@@ -51,4 +77,4 @@ if [[ "$healthy" != "1" ]];then
  systemctl restart cloudflix || true
  die "Update rolled back"
 fi
-info "Update successful. Data and configuration preserved."
+info "Update successful. Data and configuration preserved. Sign in with your 6-digit PIN."

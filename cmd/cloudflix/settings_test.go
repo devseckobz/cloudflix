@@ -36,3 +36,17 @@ func TestTMDBTokenValidationPattern(t *testing.T) {
  }
  if !validTMDBToken(strings.Repeat("A",80)){t.Fatal("rejected standard token character set")}
 }
+
+func TestTMDBCredentialStyles(t *testing.T){
+ key:=strings.Repeat("a",32)
+ if !isTMDBV3Key(key) || !validTMDBToken(key){t.Fatal("v3 API key rejected")}
+ req:=httptest.NewRequest(http.MethodGet,"https://api.themoviedb.org/3/search/movie?query=Test",nil)
+ applyTMDBAuthentication(req,key)
+ if req.URL.Query().Get("api_key")!=key{t.Fatal("v3 key was not passed as api_key")}
+ if req.Header.Get("Authorization")!=""{t.Fatal("v3 key must not be passed as bearer")}
+ bearer:="eyJ."+strings.Repeat("b",40)+"."+strings.Repeat("c",40)
+ req2:=httptest.NewRequest(http.MethodGet,"https://api.themoviedb.org/3/search/movie",nil)
+ applyTMDBAuthentication(req2,bearer)
+ if req2.Header.Get("Authorization")!="Bearer "+bearer{t.Fatal("bearer token header missing")}
+ if req2.URL.Query().Has("api_key"){t.Fatal("v4 access token must not appear in URL")}
+}

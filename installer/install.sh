@@ -183,6 +183,15 @@ if [[ "$healthy" != "1" ]];then
   systemctl status cloudflix.service --no-pager >&2 || true
   die "Cloudflix did not start on port 80. Check: journalctl -u cloudflix -n 80"
 fi
+# Install the fixed-purpose, root-owned helper used by Settings > Updates.
+# Cloudflix itself never receives arbitrary root shell execution capability.
+if fetch "https://raw.githubusercontent.com/$REPO/main/installer/setup-web-updater.sh" "$work/setup-web-updater.sh";then
+ if ! /bin/bash "$work/setup-web-updater.sh";then
+  info "WARNING: Could not enable web updates; use the one-line updater instead."
+ fi
+else
+ info "WARNING: Could not fetch updater helper; use the one-line updater instead."
+fi
 info "Cloudflix is listening on all VPS interfaces at port 80."
 print_access_url
 info "Make sure your VPS firewall/provider allows TCP port 80 from your trusted IP."

@@ -1,26 +1,22 @@
 # 🎬 Cloudflix
 
-A lightweight, self-hosted movie downloader with a modern web interface. Add magnet links, track downloads, and automatically fetch movie posters, backdrops, and release years with TMDB.
+Self-hosted movie downloader with a modern web interface. Paste a magnet link, track downloads, and organize your movie library with TMDB posters and release dates.
 
-**Go + Svelte 5 · SQLite · Single binary · Linux VPS**
+**Go · Svelte 5 · SQLite · One binary · Linux VPS**
 
 ## Install
 
-On Ubuntu/Debian with systemd (amd64 or arm64):
+On an Ubuntu/Debian VPS with systemd (amd64 or arm64):
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/install.sh | sudo bash
 ```
 
-The installer downloads the latest GitHub Release, **asks you to set and confirm a private 6-digit access PIN**, and optionally configures HTTPS for your domain.
+The installer first checks whether **TCP port 80** is free. If it's occupied, it prints the listening process/PID and exits **before installing anything**. Otherwise, it asks you to set and confirm a **6-digit access PIN**.
 
-Without a domain, Cloudflix listens on `127.0.0.1:3000` for private access. From your own computer:
+Open **`http://YOUR_VPS_IP`** to sign in. No domain, Caddy, or port number is needed. Your firewall or VPS provider must allow inbound TCP 80; restrict access to your own IP when possible.
 
-```bash
-ssh -L 3000:127.0.0.1:3000 USER@VPS_IP
-```
-
-Open **http://localhost:3000** and enter your PIN. If you configured a domain, use its HTTPS URL instead.
+> **Security:** Direct HTTP does not encrypt your PIN, session cookies or TMDB token. Avoid untrusted networks. A 6-digit PIN has limited entropy even with login rate limiting.
 
 ## Update
 
@@ -28,56 +24,36 @@ Open **http://localhost:3000** and enter your PIN. If you configured a domain, u
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/update.sh | sudo bash
 ```
 
-Existing installations using the old password login are asked to choose a **6-digit PIN once** during their next update. Your movies and settings stay intact.
+Updates use verified binaries from [GitHub Releases](https://github.com/devseckobz/cloudflix/releases). The updater migrates previous default port-3000 installations to port 80 and preserves movies, PIN, and settings. It exits if another service already owns port 80.
+
+## Settings
+
+After signing in, open **Settings → TMDB Movie Metadata** to add, replace, or remove your **TMDB API Read Access Token**. Cloudflix verifies the token against TMDB and saves it locally. The browser never receives your saved token. [Get your token](https://www.themoviedb.org/settings/api).
 
 ## Uninstall / clean reinstall
 
-**Warning:** This permanently deletes all Cloudflix movies, downloads, the database, settings, and PIN.
+**Permanent removal**, including all movies, downloads, credentials, and settings:
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/uninstall.sh | sudo bash
 ```
 
-Type `DELETE CLOUDFLIX` when prompted. The script stops and disables the service, removes Cloudflix files and its Caddy site, and leaves unrelated services alone. Then run **Install** again above.
-
-To uninstall the application **without deleting your movies and database**:
+The script requires you to type `DELETE CLOUDFLIX`. To remove the application **without deleting** its data:
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/uninstall.sh | sudo env CLOUDFLIX_KEEP_DATA=1 bash
 ```
 
-## Change or reset PIN
+## Reset PIN
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/pin.sh | sudo bash
 ```
 
-PIN entry is hidden. No username is required. After five incorrect attempts, PIN login is locked for 15 minutes. For internet access, use HTTPS; a six-digit PIN is less secure than a long password.
+## Service
 
-## Configuration
+`sudo systemctl status cloudflix` · `sudo journalctl -u cloudflix -n 100 --no-pager`
 
-- **TMDB artwork:** set `TMDB_API_KEY` (TMDB API Read Access Token) in `/etc/cloudflix/cloudflix.env`, then restart Cloudflix.
-- **Files:** `/var/lib/cloudflix`
-- **Service:** `sudo systemctl status cloudflix`
-- **Logs:** `sudo journalctl -u cloudflix -n 100 --no-pager`
-- **Binaries:** [GitHub Releases](https://github.com/devseckobz/cloudflix/releases)
+App data: `/var/lib/cloudflix` · Config: `/etc/cloudflix/cloudflix.env` · Port: `80/tcp`
 
-## Build from source
-
-Requires Go 1.27.3+ and Node.js 22+:
-
-```bash
-npm install --prefix frontend
-npm run build --prefix frontend
-go run ./cmd/cloudflix
-```
-
-Set a PIN locally before opening the web interface:
-
-```bash
-printf '%s\n' '123456' | go run ./cmd/cloudflix pin set
-```
-
-Choose your own PIN; `123456` is only a local development example. Do not reuse it on a VPS.
-
-This project is intended for media you are authorized to download and share. [MIT License](LICENSE). Movie metadata provided by [TMDB](https://www.themoviedb.org/).
+[MIT License](LICENSE) · Use only torrents you are authorized to download or share. Movie metadata from [TMDB](https://www.themoviedb.org/).

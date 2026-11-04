@@ -1,7 +1,6 @@
 package main
 
 import (
- "io"
  "net/http"
  "net/http/httptest"
  "os"
@@ -74,4 +73,3 @@ func TestMediaRejectsOtherTorrentFilesAndTraversal(t *testing.T){
   if recorder.Code<400{t.Errorf("%q must be rejected, received %d",path,recorder.Code)}
  }
 }
-var _ io.Reader

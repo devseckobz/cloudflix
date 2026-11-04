@@ -179,7 +179,7 @@
      {/if}
     </div>
    {/if}
-   <footer class="footer"><span>© Cloudflix · Self-hosted with ❤️</span><span>Powered by Go & Svelte</span></footer>
+   <footer class="footer"><span>© Cloudflix · Self-hosted with ❤️</span><span>Go + Svelte · Movie data from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer">TMDB</a>; not endorsed or certified by TMDB.</span></footer>
   </main>
   <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>page='home'}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>page='downloader'}><Download size={20}/> Downloader</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
  </div>

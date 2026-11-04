@@ -27,6 +27,35 @@ command -v curl >/dev/null || command -v wget >/dev/null || die "curl or wget is
 if [[ -n "$DOMAIN" && ! "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]]; then die "Invalid CLOUDFLIX_DOMAIN"; fi
 if [[ -n "${TMDB_API_KEY:-}" && ! "${TMDB_API_KEY}" =~ ^[a-zA-Z0-9_.-]+$ ]];then die "TMDB_API_KEY contains unsupported characters";fi
 [[ ! -e "$SERVICE" ]] || die "Cloudflix is installed. Use update.sh instead."
+command -v runuser >/dev/null || die "runuser is required"
+
+# wget/curl uses stdin for the script. Always prompt through the controlling terminal.
+[[ -r /dev/tty && -w /dev/tty ]] || die "Interactive terminal required to choose a six-digit PIN"
+choose_pin(){
+  local first second
+  while true;do
+    IFS= read -r -s -p "Choose Cloudflix 6-digit PIN: " first < /dev/tty || die "Could not read PIN"
+    printf '\n' > /dev/tty
+    if [[ ! "$first" =~ ^[0-9]{6}$ ]];then
+      printf 'PIN must be exactly six digits.\n' > /dev/tty
+      continue
+    fi
+    IFS= read -r -s -p "Confirm Cloudflix PIN: " second < /dev/tty || die "Could not confirm PIN"
+    printf '\n' > /dev/tty
+    if [[ "$first" != "$second" ]];then
+      printf 'PINs did not match. Try again.\n' > /dev/tty
+      continue
+    fi
+    PIN="$first"
+    unset first second
+    return
+  done
+}
+choose_pin
+if [[ -z "$DOMAIN" ]];then
+  IFS= read -r -p "HTTPS domain (Enter for private SSH access): " DOMAIN < /dev/tty || die "Could not read domain"
+  if [[ -n "$DOMAIN" && ! "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]];then die "Invalid domain";fi
+fi
 
 fetch(){ local src="$1" dst="$2"
  if command -v curl >/dev/null;then curl -fL --connect-timeout 15 --retry 3 --silent --show-error "$src" -o "$dst"
@@ -52,6 +81,12 @@ fi
 install -d -o cloudflix -g cloudflix -m 0700 "$DATA"
 install -d -o root -g root -m 0700 /etc/cloudflix
 install -m 0755 "$work/cloudflix" "$BIN"
+# Configure the PIN with the service account before starting the HTTP server.
+if ! printf '%s\n' "$PIN" | runuser -u cloudflix -- env CLOUDFLIX_DATA_DIR="$DATA" "$BIN" pin set;then
+  unset PIN
+  die "Could not configure Cloudflix access PIN"
+fi
+unset PIN
 if [[ ! -f "$CONFIG" ]];then
  # We do not log or print the secret.
  (umask 077; printf 'CLOUDFLIX_DATA_DIR=/var/lib/cloudflix\nCLOUDFLIX_LISTEN=127.0.0.1:3000\nTMDB_API_KEY=%s\n' "${TMDB_API_KEY:-}" > "$CONFIG")
@@ -99,11 +134,11 @@ if [[ -n "$DOMAIN" ]];then
  caddy validate --config /etc/caddy/Caddyfile >/dev/null
  systemctl enable --now caddy
  systemctl reload caddy
- info "Open https://$DOMAIN to complete administrator setup."
+ info "Cloudflix is ready at https://$DOMAIN — sign in with your 6-digit PIN."
 else
  info "Installed securely on 127.0.0.1:3000."
  info "From your computer use: ssh -L 3000:127.0.0.1:3000 USER@VPS_IP"
- info "Then open http://localhost:3000 and create your administrator password."
+ info "Then open http://localhost:3000 and sign in with your 6-digit PIN."
  info "Set CLOUDFLIX_DOMAIN before installation to configure public HTTPS."
 fi
 info "Completed. systemctl status cloudflix"

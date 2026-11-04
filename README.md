@@ -38,7 +38,7 @@ After signing in, open **Settings → TMDB Movie Metadata** to add, replace, or 
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/uninstall.sh | sudo bash
 ```
 
-The script requires you to type `DELETE CLOUDFLIX`. To remove the application **without deleting** its data:
+The script deletes Cloudflix immediately, without confirmation. **Review it before running as root.** To remove the application **without deleting** its data:
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/uninstall.sh | sudo env CLOUDFLIX_KEEP_DATA=1 bash

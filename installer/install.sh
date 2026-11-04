@@ -25,6 +25,7 @@ command -v tar >/dev/null || die "tar is required"
 command -v curl >/dev/null || command -v wget >/dev/null || die "curl or wget is required"
 [[ "$VERSION" == "latest" || "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][a-zA-Z0-9.]+)?$ ]] || die "Invalid CLOUDFLIX_VERSION"
 if [[ -n "$DOMAIN" && ! "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]]; then die "Invalid CLOUDFLIX_DOMAIN"; fi
+if [[ -n "${TMDB_API_KEY:-}" && ! "${TMDB_API_KEY}" =~ ^[a-zA-Z0-9_.-]+$ ]];then die "TMDB_API_KEY contains unsupported characters";fi
 [[ ! -e "$SERVICE" ]] || die "Cloudflix is installed. Use update.sh instead."
 
 fetch(){ local src="$1" dst="$2"

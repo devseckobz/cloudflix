@@ -105,7 +105,7 @@ fetch(){
  fi
 }
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work"; if [[ -f "$BIN.new" && ! -L "$BIN.new" ]];then rm -f -- "$BIN.new";fi' EXIT
 if [[ "$VERSION" == "latest" ]];then
   BASE="https://github.com/$REPO/releases/latest/download"
 else
@@ -118,12 +118,16 @@ fetch "$BASE/$ASSET.sha256" "$work/$ASSET.sha256" || die "Release checksum downl
 (cd "$work" && sha256sum -c "$ASSET.sha256") || die "Checksum mismatch. Update aborted."
 tar -xzf "$work/$ASSET" -C "$work" cloudflix
 [[ -f "$work/cloudflix" ]] || die "Release archive did not contain the Cloudflix binary."
-install -m 0755 "$work/cloudflix" "$work/cloudflix.candidate"
+# The mktemp directory is root-only (0700); the cloudflix service user
+# cannot traverse it. Stage the candidate in root-owned /usr/local/bin before
+# calling the candidate's PIN migration command as the cloudflix user.
+[[ ! -L "$BIN.new" ]] || die "Unexpected symlink at $BIN.new"
+install -m 0755 "$work/cloudflix" "$BIN.new"
 
 # Older password-based installations are migrated to PIN authentication only
 # when needed; do not ask existing PIN users for a new code.
 pin_status=0
-runuser -u cloudflix -- env CLOUDFLIX_DATA_DIR=/var/lib/cloudflix "$work/cloudflix.candidate" pin status >/dev/null 2>&1 || pin_status=$?
+runuser -u cloudflix -- env CLOUDFLIX_DATA_DIR=/var/lib/cloudflix "$BIN.new" pin status >/dev/null 2>&1 || pin_status=$?
 if [[ "$pin_status" == 3 ]];then
   [[ -r /dev/tty && -w /dev/tty ]] || die "An interactive terminal is required for the six-digit PIN migration."
   info "Your old login must be replaced with a six-digit PIN."
@@ -136,7 +140,7 @@ if [[ "$pin_status" == 3 ]];then
     if [[ "$PIN" == "$PIN_CONFIRM" ]];then break;fi
     printf 'PINs did not match.\n' >/dev/tty
   done
-  printf '%s\n' "$PIN" | runuser -u cloudflix -- env CLOUDFLIX_DATA_DIR=/var/lib/cloudflix "$work/cloudflix.candidate" pin set || die "PIN migration failed."
+  printf '%s\n' "$PIN" | runuser -u cloudflix -- env CLOUDFLIX_DATA_DIR=/var/lib/cloudflix "$BIN.new" pin set || die "PIN migration failed."
   unset PIN PIN_CONFIRM
 elif [[ "$pin_status" != 0 ]];then
   die "Could not check existing PIN configuration (exit status $pin_status)."
@@ -184,7 +188,6 @@ case "$listen" in
  *:*) health_host="${listen%:*}";;
 esac
 
-install -m 0755 "$work/cloudflix.candidate" "$BIN.new"
 mv -f "$BIN.new" "$BIN"
 systemctl daemon-reload
 if ! systemctl restart cloudflix.service;then

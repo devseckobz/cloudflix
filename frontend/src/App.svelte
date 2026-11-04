@@ -2,6 +2,7 @@
  import { onMount } from 'svelte'
  import { selectLibraryPage, countDownloading } from './lib/library.js'
  import {findPlayback,mediaURL} from './lib/media.js'
+ import {createVersionReloadMonitor} from './lib/version-reload.js'
  import { Film, House, Download, Search, ArrowDownToLine, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, LoaderCircle, Shield, Clapperboard, AlertCircle, ExternalLink, Star, ChevronLeft, ChevronRight, Maximize2, Clapperboard as FilmClap, MonitorPlay, RefreshCw, ArrowUpCircle } from '@lucide/svelte'
 
  type Movie = {hash:string,title:string,year:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
@@ -32,6 +33,8 @@
  let updateChecking = $state(false)
  let updateBusy = $state(false)
  let updateError = $state('')
+ // Ignore the initial server version; reload only when the running binary changes.
+ const versionMonitor=createVersionReloadMonitor(()=>window.location.reload())
  const navigate=(destination:'home'|'downloader'|'settings')=>{
    if(destination==='settings'||destination==='downloader')void loadSettings()
    page=destination
@@ -95,6 +98,8 @@
    if(!quiet)updateChecking=true
    try{
      const data=await call('updates')
+     // Settings polling detects a newly installed version even if SSE is offline.
+     if(versionMonitor.observe(data.currentVersion))return
      updateInfo=data as UpdateInfo
      updateError=''
    }catch(e){
@@ -149,7 +154,13 @@
    }catch(e){error=(e as Error).message}
    finally{settingsBusy=false}
  }
- const setState=(state:{movies:Movie[],version?:string})=>{movies=state.movies||[];if(state.version)version=state.version;if(selected)selected=movies.find(m=>m.hash===selected?.hash)||null}
+ const setState=(state:{movies:Movie[],version?:string})=>{
+   // SSE also covers terminal-based updates and all pages, not just Settings.
+   if(state.version && versionMonitor.observe(state.version))return
+   movies=state.movies||[]
+   if(state.version)version=state.version
+   if(selected)selected=movies.find(m=>m.hash===selected?.hash)||null
+ }
  const connect=()=>{
    live?.close()
    live=new EventSource('/api/events')
@@ -468,7 +479,7 @@
   <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>navigate('home')}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={20}/> Downloader {#if active>0}<span class="mobile-download-count" aria-label={active+' active downloads'}>{active}</span>{/if}</button><button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={20}/> Settings</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
  </div>
  {#if selected}
-  <div class="modal-backdrop cinema-player-backdrop" role="presentation" onclick={(event)=>{if(event.target===event.currentTarget)closeMovie()}}>
+  <div class="modal-backdrop cinema-player-backdrop" role="presentation">
    <div class="cinema-player-modal" role="dialog" aria-modal="true" aria-label={'Watch '+selected.title}>
     <header class="cinema-player-heading">
      <div class="player-title-group">

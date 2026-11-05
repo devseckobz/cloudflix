@@ -2,7 +2,41 @@
 
 Self-hosted movie downloader with a modern web interface. Paste a magnet link, track downloads, and organize your movie library with TMDB posters and release dates.
 
-## Install
+## Local development (Windows + WSL Debian)
+
+Use Node.js 22 on Windows and Go 1.27.3 inside WSL Debian. The backend runs
+in Linux because MKV preparation uses `/proc/self/fd` and requires `ffmpeg`
+and `ffprobe` (Debian package `ffmpeg`).
+
+From PowerShell in the project root:
+
+```powershell
+npm.cmd ci --prefix frontend
+npm.cmd run check --prefix frontend
+npm.cmd test --prefix frontend
+npm.cmd run build --prefix frontend
+wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && go mod download && go test ./... && go vet ./... && mkdir -p tmp && go build -o tmp/cloudflix ./cmd/cloudflix'
+```
+
+Configure your own local six-digit PIN interactively (input is hidden):
+
+```powershell
+Read-Host 'Local PIN (six digits)' -MaskInput | wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && CLOUDFLIX_DATA_DIR=./tmp/local-data ./tmp/cloudflix pin set'
+```
+
+Start the backend in one terminal:
+
+```powershell
+wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && CLOUDFLIX_DATA_DIR=./tmp/local-data CLOUDFLIX_LISTEN=127.0.0.1:3000 ./tmp/cloudflix'
+```
+
+Open `http://localhost:3000` for the built app. For frontend hot reload, run
+`npm.cmd run dev --prefix frontend` in another terminal and open the Vite URL.
+Vite proxies `/api` to port 3000. Local data and binaries stay under ignored
+`tmp/`; TMDB credentials can be configured in Settings. Systemd software
+updates require an installed VPS service and are unavailable in this local setup.
+
+## VPS installation
 
 On an Ubuntu/Debian VPS with systemd (amd64 or arm64):
 
@@ -17,6 +51,16 @@ The installer detects your VPS IPv4 and prints the **actual `http://IP` address*
 > **Security:** Direct HTTP does not encrypt your PIN, session cookies or TMDB token. Avoid untrusted networks. A 6-digit PIN has limited entropy even with login rate limiting.
 
 ## Watch & download
+
+Downloader shows the free space on the filesystem containing your downloads.
+After magnet metadata arrives, Cloudflix checks the remaining size of all selected
+MP4, MKV and SRT files before requesting any movie content. It reserves space for
+unfinished downloads (including paused jobs) and leaves a 64 MB safety margin.
+If the movie will not fit, or disk space cannot be read, the queue shows an error
+and does not start the download. Resume checks capacity again. Free disk space
+and capacity available for new downloads update live. Other programs can still
+consume disk space after a download starts; MKV playback conversion also needs
+additional space for its MP4 cache.
 
 Home shows movie posters, release years and TMDB genres (search and 10 movies per page). Play completed **MP4 or MKV** movies in the theater with CC and fullscreen. MKV files are prepared as browser-compatible MP4 when opened; text subtitles embedded in MKV (SRT/ASS) are available through CC. Image-based subtitles such as PGS are not currently supported.
 

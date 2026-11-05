@@ -221,7 +221,7 @@ func (a *application) logout(w http.ResponseWriter,r *http.Request){
  http.SetCookie(w,&http.Cookie{Name:"cloudflix_session",Path:"/",MaxAge:-1,HttpOnly:true,Secure:secureRequest(r),SameSite:http.SameSiteStrictMode})
  respond(w,200,map[string]bool{"ok":true})
 }
-func (a *application) state(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]any{"movies":a.engine.snapshot(),"version":version})}
+func (a *application) state(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]any{"movies":a.engine.snapshot(),"storage":a.engine.storage(),"version":version})}
 func (a *application) events(w http.ResponseWriter,r *http.Request){
  w.Header().Set("Content-Type","text/event-stream")
  w.Header().Set("Cache-Control","no-store")
@@ -229,7 +229,7 @@ func (a *application) events(w http.ResponseWriter,r *http.Request){
  flusher,ok:=w.(http.Flusher);if !ok{fail(w,500,"stream unavailable");return}
  ticker:=time.NewTicker(2*time.Second);defer ticker.Stop()
  for {
-  state,_:=json.Marshal(map[string]any{"movies":a.engine.snapshot(),"version":version})
+  state,_:=json.Marshal(map[string]any{"movies":a.engine.snapshot(),"storage":a.engine.storage(),"version":version})
   if _,err:=fmt.Fprintf(w,"data: %s\n\n",state);err!=nil{return}
   flusher.Flush()
   select{case <-r.Context().Done():return;case <-ticker.C:}

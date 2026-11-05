@@ -9,6 +9,8 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "strict": true,
+    "baseUrl": ".",
+    "paths": { "$lib": ["./src/lib"], "$lib/*": ["./src/lib/*"] },
     "noEmit": true,
     "types": ["vite/client"]
   },

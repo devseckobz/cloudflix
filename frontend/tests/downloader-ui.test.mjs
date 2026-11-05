@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-const source=readFileSync(new URL('../src/App.svelte',import.meta.url),'utf8')
+const source=readFileSync(new URL('../src/App.svelte',import.meta.url),'utf8').replace(/\r\n/g,'\n')
 const css=readFileSync(new URL('../src/app.css',import.meta.url),'utf8')
 const start=source.indexOf('<div class="dashboard-content download-page">')
 const end=source.indexOf('   {/if}\n   <footer',start)

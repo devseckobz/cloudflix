@@ -1,5 +1,13 @@
 <script lang="ts">
  import { onMount } from 'svelte'
+ import { Button } from '$lib/components/ui/button/index.js'
+ import * as Card from '$lib/components/ui/card/index.js'
+ import { Badge } from '$lib/components/ui/badge/index.js'
+ import { Input } from '$lib/components/ui/input/index.js'
+ import { Textarea } from '$lib/components/ui/textarea/index.js'
+ import { Separator } from '$lib/components/ui/separator/index.js'
+ import { Progress } from '$lib/components/ui/progress/index.js'
+ import * as Dialog from '$lib/components/ui/dialog/index.js'
  import { selectLibraryPage, countDownloading } from './lib/library.js'
  import {findPlayback,mediaURL} from './lib/media.js'
  import {createVersionReloadMonitor} from './lib/version-reload.js'
@@ -15,6 +23,9 @@
  let auth = $state<'loading'|'setup'|'login'|'ready'>('loading')
  let pin = $state('')
  let movies = $state<Movie[]>([])
+ type Storage = {known:boolean,total:number,free:number,reserved:number,available:number,headroom:number,error?:string}
+ let storage = $state<Storage|null>(null)
+ const storageUsed = $derived(storage?.known&&storage.total>0?Math.min(100,100*(storage.total-storage.free)/storage.total):0)
  let error = $state('')
  let notice = $state('')
  let magnet = $state('')
@@ -257,10 +268,11 @@
    }catch(e){error=(e as Error).message}
    finally{settingsBusy=false}
  }
- const setState=(state:{movies:Movie[],version?:string})=>{
+ const setState=(state:{movies:Movie[],version?:string,storage?:Storage})=>{
    // SSE also covers terminal-based updates and all pages, not just Settings.
    if(state.version && versionMonitor.observe(state.version))return
    movies=state.movies||[]
+   storage=state.storage||null
    if(state.version)version=state.version
    if(selected)selected=movies.find(m=>m.hash===selected?.hash)||null
  }
@@ -408,16 +420,27 @@
   </form>
  </div>
 {:else}
- <div class="app-shell">
+ <div class="app-shell" data-page={page}>
   <aside class="sidebar">
    <button class="brand brand-button" onclick={()=>navigate('home')} aria-label="Cloudflix homepage"><span class="brand-icon"><Film size={25}/></span><strong>cloud<span>flix</span></strong></button>
-   <div class="side-label">MENU</div>
+   <div class="side-label">{page==='home'?'MENU':'WORKSPACE'}</div>
    <nav aria-label="Main navigation">
     <button class:active={page==='home'} onclick={()=>navigate('home')}><House size={19}/> Home</button>
     <button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={19}/> Downloader {#if active>0}<span class="nav-count" aria-label={active+' active downloads'}>{active}</span>{/if}</button>
     <button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={19}/> Settings</button>
    </nav>
    <div class="sidebar-bottom">
+    {#if page!=='home'}
+    <div class="sidebar-storage">
+     <div><HardDrive size={15}/><span>Server storage</span></div>
+     {#if storage?.known}
+      <strong>{formatBytes(storage.free)} <span>free</span></strong>
+      <Progress value={storageUsed} aria-label="Server disk usage"/>
+      <small>{formatBytes(storage.total)} total capacity</small>
+     {:else}<small>{storage?.error?'Storage unavailable':'Checking storage…'}</small>{/if}
+    </div>
+    <Separator/>
+    {/if}
     <div class="server-status"><span class:online={connected} class="status-dot"></span><span>{connected?'Server connected':'Reconnecting...'}</span></div>
     <button onclick={signOut} class="signout"><LogOut size={18}/> Sign out</button>
    </div>
@@ -436,6 +459,7 @@
     {:else}
      <span class="nav-page-caption">{page==='settings'?'Settings':'Downloader'}</span>
     {/if}
+    {#if page!=='home'}<div class="topbar-status"><span class:online={connected} class="status-dot"></span><span>Your private cloud</span></div>{/if}
    </header>
    {#if notice}<div class="toast success"><CheckCircle2 size={16}/>{notice}<button onclick={()=>notice=''} aria-label="Dismiss"><X size={16}/></button></div>{/if}
    {#if error}<div class="toast error"><AlertCircle size={16}/>{error}<button onclick={()=>error=''} aria-label="Dismiss"><X size={16}/></button></div>{/if}
@@ -488,11 +512,11 @@
    {:else if page==='settings'}
     <div class="dashboard-content settings-page">
      <div class="page-title">
-      <div class="eyebrow"><span class="red-dot"></span> CLOUDFLIX CONFIGURATION</div>
+      <div class="eyebrow">MAKE IT YOURS</div>
       <h1>Settings</h1>
-      <p>Manage integrations and your server preferences.</p>
+      <p>A few essentials for your personal movie server.</p>
      </div>
-     <section class="settings-panel">
+     <Card.Root class="settings-panel">
       <div class="settings-panel-header">
        <div class="settings-panel-icon"><Film size={23}/></div>
        <div class="settings-panel-intro">
@@ -503,16 +527,16 @@
       </div>
       <form class="settings-form" onsubmit={(event)=>{event.preventDefault();saveTMDB()}}>
        <label for="tmdb-token">TMDB API key or Read Access Token</label>
-       <input id="tmdb-token" type="password" bind:value={tmdbToken} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="2048" placeholder={tmdbConfigured?'Enter a new token to replace the saved one':'Paste your TMDB API key or Read Access Token'} />
+       <Input id="tmdb-token" type="password" bind:value={tmdbToken} autocomplete="off" autocapitalize="off" spellcheck={false} maxlength={2048} placeholder={tmdbConfigured?'Enter a new token to replace the saved one':'Paste your TMDB API key or Read Access Token'} />
        <p class="settings-hint">Your token is checked directly with TMDB and stored privately on this VPS. For security, the saved token is never displayed.</p>
        <div class="settings-actions">
-        <button type="submit" class="primary" disabled={settingsBusy||!tmdbToken.trim()}>{#if settingsBusy}<LoaderCircle size={17}/>{:else}<CheckCircle2 size={17}/>{/if} Save & verify token</button>
-        {#if tmdbConfigured}<button type="button" class="settings-remove" disabled={settingsBusy} onclick={clearTMDB}><Trash2 size={17}/> Remove token</button>{/if}
+        <Button type="submit" class="primary" disabled={settingsBusy||!tmdbToken.trim()}>{#if settingsBusy}<LoaderCircle size={17}/>{:else}<CheckCircle2 size={17}/>{/if} Save & verify token</Button>
+        {#if tmdbConfigured}<Button type="button" class="settings-remove" disabled={settingsBusy} onclick={clearTMDB}><Trash2 size={17}/> Remove token</Button>{/if}
        </div>
        <p class="settings-help">Get your token from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">TMDB account settings</a>. Both the <strong>32-character API key</strong> and the <strong>API Read Access Token</strong> are supported.</p>
       </form>
-     </section>
-     <section class="settings-panel update-settings-panel" aria-label="Software updates">
+     </Card.Root>
+     <Card.Root class="settings-panel update-settings-panel" aria-label="Software updates">
       <div class="settings-panel-header">
        <div class="settings-panel-icon"><RefreshCw size={23}/></div>
        <div class="settings-panel-intro">
@@ -544,17 +568,17 @@
        <p class="settings-warning"><AlertCircle size={16}/> The web updater isn't installed. Run the one-line update command from your VPS terminal once to enable this feature.</p>
       {/if}
       <div class="settings-actions update-buttons">
-       <button type="button" class="settings-update-check" disabled={updateChecking||updateBusy} onclick={()=>loadUpdateInfo()}><RefreshCw size={17}/> {updateChecking?'Checking…':'Check for updates'}</button>
+       <Button type="button" class="settings-update-check" disabled={updateChecking||updateBusy} onclick={()=>loadUpdateInfo()}><RefreshCw size={17}/> {updateChecking?'Checking…':'Check for updates'}</Button>
        {#if updateInfo?.updateAvailable}
-        <button type="button" class="primary" disabled={updateBusy||!updateInfo.updaterReady||updateInfo.state==='running'||updateInfo.state==='queued'} onclick={startUpdate}>
+        <Button type="button" class="primary" disabled={updateBusy||!updateInfo.updaterReady||updateInfo.state==='running'||updateInfo.state==='queued'} onclick={startUpdate}>
          {#if updateBusy}<LoaderCircle size={17} class="spin"/>{:else}<ArrowUpCircle size={17}/>{/if}
          Update to {updateInfo.latestVersion}
-        </button>
+        </Button>
        {/if}
       </div>
       <p class="settings-hint">Updates run through a restricted, root-owned systemd helper. The web app cannot run arbitrary commands.</p>
-     </section>
-     <section class="settings-panel">
+     </Card.Root>
+     <Card.Root class="settings-panel">
       <div class="settings-panel-header">
        <div class="settings-panel-icon"><HardDrive size={23}/></div>
        <div class="settings-panel-intro">
@@ -566,7 +590,7 @@
        <span>Current server</span><strong>{typeof window!=='undefined'?window.location.host :'VPS_IP'}</strong>
       </div>
       <p class="settings-warning"><AlertCircle size={16}/> Direct HTTP access is unencrypted. On an untrusted network your PIN, session cookies, and any TMDB token submitted here may be intercepted. Restrict port 80 to trusted IP addresses where possible.</p>
-     </section>
+     </Card.Root>
     </div>
    {:else}
     <div class="dashboard-content download-page">
@@ -578,10 +602,17 @@
       <span class="downloader-online"><span class:online={connected} class="status-dot"></span>{connected?'Connected':'Reconnecting'}</span>
      </div>
      <div class="stat-grid downloader-stats">
-      <div class="stat"><div class="stat-icon red"><Clapperboard size={19}/></div><div><span>All downloads</span><strong>{movies.length}</strong></div></div>
-      <div class="stat"><div class="stat-icon blue"><Download size={19}/></div><div><span>Downloading</span><strong>{active}</strong></div></div>
-      <div class="stat"><div class="stat-icon green"><CheckCircle2 size={19}/></div><div><span>Completed</span><strong>{completed}</strong></div></div>
-      <div class="stat"><div class="stat-icon purple"><HardDrive size={19}/></div><div><span>Downloaded</span><strong>{formatBytes(movies.reduce((a,m)=>a+m.completed,0))}</strong></div></div>
+      <Card.Root class="stat"><div class="stat-icon red"><Clapperboard size={18}/></div><div><span>All downloads</span><strong>{movies.length}</strong></div></Card.Root>
+      <Card.Root class="stat"><div class="stat-icon blue"><Download size={18}/></div><div><span>Downloading</span><strong>{active}</strong></div></Card.Root>
+      <Card.Root class="stat"><div class="stat-icon green"><CheckCircle2 size={18}/></div><div><span>Completed</span><strong>{completed}</strong></div></Card.Root>
+      <Card.Root class="stat"><div class="stat-icon purple"><HardDrive size={18}/></div><div><span>Downloaded</span><strong>{formatBytes(movies.reduce((a,m)=>a+m.completed,0))}</strong></div></Card.Root>
+      <Card.Root class="stat storage-stat"><div class="stat-icon blue"><HardDrive size={18}/></div><div><span>VPS space left</span><strong>{storage?.known?formatBytes(storage.free):'Unavailable'}</strong></div></Card.Root>
+     </div>
+     <div class="storage-overview" role="status">
+      <div class="storage-overview-label"><Shield size={15}/><strong>Storage check</strong></div>
+      {#if storage?.known}
+       <p><strong>{formatBytes(storage.available)}</strong> available for new downloads{#if storage.reserved>0} · {formatBytes(storage.reserved)} reserved for your queue{/if}<span> · 64 MB safety reserve</span></p>
+      {:else}<p class="storage-error">{storage?.error||'Checking server storage before downloads can start.'}</p>{/if}
      </div>
      {#if tmdbChecked&&!tmdbConfigured&&!settingsLoading}
       <div class="tmdb-required" role="alert">
@@ -594,17 +625,17 @@
       <form class="magnet-form downloader-magnet-form" onsubmit={(e)=>{e.preventDefault();void add()}}>
        <div class="magnet-panel-heading">
         <div><h2>Add a download</h2><p>Paste a magnet link to add a movie to your queue.</p></div>
-        <span class="magnet-media-hint">MP4 · MKV · SRT</span>
+        <Badge variant="outline" class="magnet-media-hint">MP4 · MKV · SRT</Badge>
        </div>
        <label for="magnet">MAGNET LINK</label>
        <div class="magnet-entry-row">
-        <textarea id="magnet" bind:value={magnet} placeholder="magnet:?xt=urn:btih:..." rows="2" required spellcheck="false"></textarea>
-        <button class="primary magnet-add-button" type="submit" disabled={submitting||!magnet.trim()||(tmdbChecked&&!tmdbConfigured)}>
+        <Textarea id="magnet" bind:value={magnet} placeholder="magnet:?xt=urn:btih:..." rows={2} required spellcheck={false}/>
+        <Button class="primary magnet-add-button" type="submit" disabled={submitting||!magnet.trim()||(tmdbChecked&&!tmdbConfigured)}>
          {#if submitting}<LoaderCircle size={17} class="spin"/>{:else}<Plus size={18}/>{/if}
          Add download
-        </button>
+        </Button>
        </div>
-       <p class="magnet-disclaimer">Only download content you're authorized to use.</p>
+       <p class="magnet-disclaimer"><Shield size={13}/> File size and available space are checked before downloading. Only download content you're authorized to use.</p>
       </form>
      </section>
      <section class="download-queue-section" aria-label="Download queue">
@@ -681,11 +712,11 @@
   <nav class="mobile-nav"><button class:active={page==='home'} onclick={()=>navigate('home')}><House size={20}/> Home</button><button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={20}/> Downloader {#if active>0}<span class="mobile-download-count" aria-label={active+' active downloads'}>{active}</span>{/if}</button><button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={20}/> Settings</button><button onclick={signOut}><LogOut size={20}/> Log out</button></nav>
  </div>
  {#if fileViewer}
-  <div class="modal-backdrop file-inspector-backdrop" role="presentation">
-   <section class="file-inspector" role="dialog" aria-modal="true" aria-label={'Torrent files for '+fileViewer.title}>
+  <Dialog.Root open={Boolean(fileViewer)} onOpenChange={(open)=>{if(!open)closeFileViewer()}}>
+   <Dialog.Content class="file-inspector" showCloseButton={false} onInteractOutside={(event)=>event.preventDefault()} aria-label={'Torrent files for '+fileViewer.title} aria-describedby={undefined}>
     <header class="file-inspector-header">
      <div class="file-inspector-heading">
-      <h2>Files</h2>
+      <Dialog.Title>Files</Dialog.Title>
       <p title={fileViewer.title}>{fileViewer.title}</p>
      </div>
      <button type="button" class="file-inspector-close" aria-label="Close files" onclick={closeFileViewer}><X size={19}/></button>
@@ -730,8 +761,8 @@
       {/if}
      </div>
     {/if}
-   </section>
-  </div>
+   </Dialog.Content>
+  </Dialog.Root>
  {/if}
  {#if selected}
   <div class="modal-backdrop cinema-player-backdrop" role="presentation">

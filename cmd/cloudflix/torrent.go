@@ -52,6 +52,7 @@ type engine struct{
  tmdbKey string
  entries map[string]*entry
  activeFileInspections int
+ diskSpace func(string)(uint64,uint64,error)
 }
 // Older Cloudflix SQLite catalogs did not store TMDB ratings.
 // Add the column in place without removing any existing movies or downloads.
@@ -341,6 +342,10 @@ func (e *engine) startWhenReady(item *entry){
    e.rejectTorrentLocked(item,"Rejected: torrent contains no .mp4 or .mkv movie. Only .mp4, .mkv and .srt files are permitted.")
    return
   }
+  if err:=e.checkTorrentStorageLocked(item);err!=nil{
+   e.rejectTorrentLocked(item,err.Error())
+   return
+  }
   // Never call DownloadAll. Pieces can straddle a selected and skipped file,
   // so a small number of adjacent boundary bytes may still be transferred.
   for _,file:=range tt.Files(){file.SetPriority(torrent.PiecePriorityNone)}
@@ -365,6 +370,9 @@ func (e *engine) rejectTorrentLocked(item *entry,reason string){
   }
  }
  item.rejectionReason=reason
+ if item.fileManifest!=nil{
+  for i:=range item.fileManifest.Files{item.fileManifest.Files[i].Selected=false}
+ }
  if item.torrent!=nil{
   item.torrent.DisallowDataDownload()
   item.torrent.Drop()
@@ -414,6 +422,9 @@ func (e *engine) action(hash,action string)error{
   item.torrent.DisallowDataDownload()
  case "resume":
   if item.rejectionReason!="" || item.torrent==nil{return errors.New("rejected torrent cannot be resumed")}
+  if item.validated {
+   if err:=e.checkTorrentStorageLocked(item);err!=nil{return err}
+  }
   if _,err:=e.db.Exec("UPDATE torrents SET paused=0 WHERE hash=?",hash);err!=nil{return err}
   item.paused=false
   if item.validated{item.torrent.AllowDataDownload()}

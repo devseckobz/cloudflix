@@ -38,7 +38,7 @@ jobs:
           elif [[ "$REF_TYPE" == "tag" ]];then
             TAG="$REF_NAME"
           else
-            TAG="v0.1.18"
+            TAG="v0.1.19"
           fi
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][a-zA-Z0-9.]+)?$ ]]
           echo "TAG=$TAG" >> "$GITHUB_ENV"
@@ -48,7 +48,7 @@ jobs:
           fi
       - name: Install frontend packages
         if: env.ALREADY_RELEASED != 'true'
-        run: npm install --prefix frontend
+        run: npm ci --prefix frontend
       - name: Check and build Svelte UI
         if: env.ALREADY_RELEASED != 'true'
         run: |

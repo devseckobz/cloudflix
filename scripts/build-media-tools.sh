@@ -10,13 +10,34 @@ mkdir -p "$OUTPUT" "$CACHE" "$ROOT/tmp"
 OUTPUT="$(cd "$OUTPUT" && pwd)"
 work="$(mktemp -d)"
 trap 'code=$?; if [[ "$code" != 0 && -f "$work/ffmpeg-$FFMPEG/ffbuild/config.log" ]];then cp "$work/ffmpeg-$FFMPEG/ffbuild/config.log" "$ROOT/tmp/media-config.log";fi; rm -rf "$work"' EXIT
+# A release build must not fail because one upstream mirror briefly refuses a
+# connection. ffmpeg.org intermittently resets TLS (curl exit 35) and can exceed
+# a short connect timeout, which aborted v0.1.24's arm64 job mid-download. Retry
+# every error class, fall back to the www host, and only then give up. The
+# checksum is still verified afterwards, so a mirror swap cannot smuggle in
+# different bytes.
 fetch_source(){
- local name="$1" sha="$2" url="$3"
- if [[ ! -f "$CACHE/$name" ]];then curl -fL --retry 3 "$url" -o "$CACHE/$name";fi
+ local name="$1" sha="$2"
+ local -a urls=("${@:3}")
+ local tmp="$CACHE/$name.part" url
+ [[ -f "$CACHE/$name" ]] && { printf '%s  %s\n' "$sha" "$CACHE/$name" | sha256sum -c -; return; }
+ for url in "${urls[@]}";do
+  rm -f "$tmp"
+  if curl -fL --retry 8 --retry-delay 5 --retry-all-errors --connect-timeout 30 \
+      --max-time 900 "$url" -o "$tmp";then
+   mv -f "$tmp" "$CACHE/$name"
+   break
+  fi
+  printf 'warning: download failed from %s; trying next source\n' "$url" >&2
+ done
+ [[ -f "$CACHE/$name" ]] || { printf 'ERROR: could not download %s from any source\n' "$name" >&2; return 1; }
  printf '%s  %s\n' "$sha" "$CACHE/$name" | sha256sum -c -
 }
-fetch_source "ffmpeg-$FFMPEG.tar.xz" 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e "https://ffmpeg.org/releases/ffmpeg-$FFMPEG.tar.xz"
-fetch_source "x264-$X264.tar.bz2" 6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224 "https://code.videolan.org/videolan/x264/-/archive/$X264/x264-$X264.tar.bz2"
+fetch_source "ffmpeg-$FFMPEG.tar.xz" 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e \
+ "https://ffmpeg.org/releases/ffmpeg-$FFMPEG.tar.xz" \
+ "https://www.ffmpeg.org/releases/ffmpeg-$FFMPEG.tar.xz"
+fetch_source "x264-$X264.tar.bz2" 6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224 \
+ "https://code.videolan.org/videolan/x264/-/archive/$X264/x264-$X264.tar.bz2"
 tar -xf "$CACHE/x264-$X264.tar.bz2" -C "$work"
 tar -xf "$CACHE/ffmpeg-$FFMPEG.tar.xz" -C "$work"
 jobs="${CLOUDFLIX_MEDIA_JOBS:-$(getconf _NPROCESSORS_ONLN)}"

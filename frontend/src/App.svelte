@@ -382,7 +382,7 @@
      description:'Your server will restart briefly. Your movies, PIN and settings are preserved.',
      confirmLabel:'Install update',
    })
-   if(!ok)return
+   if(ok!==true)return
    updateBusy=true
    updateError=''
    try{
@@ -422,7 +422,7 @@
      confirmLabel:'Remove token',
      destructive:true,
    })
-   if(!ok)return
+   if(ok!==true)return
    settingsBusy=true
    try{
      await call('settings','PUT',{tmdbApiKey:''})
@@ -575,13 +575,35 @@
    }
  }
  const action=async(m:Movie,verb:'pause'|'resume'|'remove')=>{
+   let deleteFiles=false
    if(verb==='remove'){
-     const ok=await confirmDialog(m.status==='rejected'
-       ?{title:'Delete this rejected torrent?',description:'Its record and temporary file list will be removed.',confirmLabel:'Delete',destructive:true}
-       :{title:'Remove this torrent?',description:'Downloaded files are retained on the server.',confirmLabel:'Remove',destructive:true})
-     if(!ok)return
+     if(m.status==='rejected'){
+       // A rejected torrent never downloaded payload, so there is no third choice.
+       const ok=await confirmDialog({title:'Delete this rejected torrent?',description:'Its record and temporary file list will be removed.',confirmLabel:'Delete',destructive:true})
+       if(ok!==true)return
+     }else{
+       // Removing used to always keep the files, which left the disk full with
+       // no way to clean up from the UI. Offer both outcomes explicitly.
+       const choice=await confirmDialog({
+         title:'Delete this torrent?',
+         description:'The queue entry is removed either way. Choose whether the downloaded movie files on the server are deleted too.',
+         cancelLabel:'Cancel',
+         confirmLabel:'Remove from queue',
+         alternateLabel:'Delete files too',
+         alternateDestructive:true,
+         alternateHint:'Deletes the downloaded movie and subtitle files from the server.',
+       })
+       if(choice==='cancel'||choice===false)return
+       deleteFiles=choice==='alternate'
+     }
    }
-   try{await call('torrents/'+encodeURIComponent(m.hash)+'/'+verb,'POST',{});if(verb==='remove' && selected?.hash===m.hash)closeMovie();if(verb==='remove' && fileViewer?.hash===m.hash)closeFileViewer();await refresh()}
+   try{
+     await call('torrents/'+encodeURIComponent(m.hash)+'/'+verb,'POST',verb==='remove'?{deleteFiles}:{})
+     if(verb==='remove' && selected?.hash===m.hash)closeMovie()
+     if(verb==='remove' && fileViewer?.hash===m.hash)closeFileViewer()
+     if(verb==='remove')notify(deleteFiles?'Torrent and downloaded files deleted':'Torrent removed. Files kept on the server.')
+     await refresh()
+   }
    catch(e){fail((e as Error).message)}
  }
 </script>

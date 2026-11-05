@@ -164,11 +164,11 @@ func TestResumeRechecksStorageWithoutUnpausing(t *testing.T) {
 	e, items := storageFixture(t, 1, storageHeadroom+(3<<20))
 	e.startWhenReady(items[0])
 	awaitStorageDecision(t, e, items)
-	if err := e.action(items[0].hash, "pause"); err != nil {
+	if err := e.action(items[0].hash, "pause", false); err != nil {
 		t.Fatal(err)
 	}
 	e.diskSpace = func(string) (uint64, uint64, error) { return storageHeadroom, storageHeadroom, nil }
-	if err := e.action(items[0].hash, "resume"); err == nil {
+	if err := e.action(items[0].hash, "resume", false); err == nil {
 		t.Fatal("resume overcommitted disk")
 	}
 	if !items[0].paused {

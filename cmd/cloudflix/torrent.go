@@ -5,6 +5,7 @@ import (
  "database/sql"
  "encoding/json"
  "errors"
+ "fmt"
  "io"
  "net/http"
  "net/url"
@@ -61,6 +62,7 @@ type engine struct{
  client *torrent.Client
  db *sql.DB
  downloads string
+ cacheDir string // playback-cache directory; empty disables cache cleanup
  tmdbKey string
  entries map[string]*entry
  activeFileInspections int
@@ -342,7 +344,7 @@ func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  }
  client,err:=torrent.NewClient(config)
  if err!=nil{return nil,err}
- e:=&engine{client:client,db:db,downloads:downloads,tmdbKey:key,entries:make(map[string]*entry)}
+ e:=&engine{client:client,db:db,downloads:downloads,cacheDir:filepath.Join(filepath.Dir(downloads),"playback-cache"),tmdbKey:key,entries:make(map[string]*entry)}
  if key!=""{_,_=db.Exec("UPDATE torrents SET looked_up=0 WHERE (poster='' OR rating=0) AND looked_up=1")}
  rows,err:=db.Query("SELECT rowid,hash,magnet,paused,title,year,genre,poster,backdrop,rating,looked_up,rejection_reason FROM torrents ORDER BY rowid ASC")
  if err!=nil{client.Close();return nil,err}
@@ -477,7 +479,90 @@ func (e *engine) add(magnet string)(string,error){
  e.startWhenReady(item)
  return hash,nil
 }
-func (e *engine) action(hash,action string)error{
+// torrentFilesLocked lists the media paths a torrent owns: from live metadata
+// when the torrent is still loaded, otherwise from the manifest captured while
+// inspecting it. Both are filtered through allowedMediaPath, so a hostile name
+// can never point outside the downloads root.
+func (e *engine) torrentFilesLocked(item *entry)[]string{
+ var paths []string
+ if item.torrent!=nil && item.torrent.Info()!=nil{
+  for _,file:=range item.torrent.Files(){
+   if path:=filepath.ToSlash(file.Path());allowedMediaPath(path){paths=append(paths,path)}
+  }
+  return paths
+ }
+ if item.fileManifest!=nil{
+  for _,file:=range item.fileManifest.Files{
+   if file.Selected && allowedMediaPath(file.Path){paths=append(paths,file.Path)}
+  }
+ }
+ return paths
+}
+
+// foreignTorrentFilesLocked collects every media path another queued torrent
+// claims. Two torrents can ship the same filename, and the shared downloads
+// directory means deleting one must never destroy the other's movie.
+func (e *engine) foreignTorrentFilesLocked(skip string)map[string]bool{
+ foreign:=make(map[string]bool)
+ for hash,other:=range e.entries{
+  if hash==skip || other==nil{continue}
+  for _,path:=range e.torrentFilesLocked(other){foreign[path]=true}
+ }
+ return foreign
+}
+
+// deleteTorrentFilesLocked removes this torrent's payload files from disk. It
+// only ever unlinks paths the torrent itself declares, inside an os.Root, and
+// skips anything a different queued torrent still owns.
+func (e *engine) deleteTorrentFilesLocked(item *entry)error{
+ owned:=e.torrentFilesLocked(item)
+ if len(owned)==0{return nil}
+ foreign:=e.foreignTorrentFilesLocked(item.hash)
+ root,err:=os.OpenRoot(e.downloads)
+ if err!=nil{return err}
+ defer root.Close()
+ directories:=make(map[string]bool)
+ var firstErr error
+ for _,path:=range owned{
+  if foreign[path]{continue}
+  local:=filepath.FromSlash(path)
+  if err:=root.Remove(local);err!=nil{
+   // A torrent that was queued but never finished has no files on disk.
+   if !errors.Is(err,os.ErrNotExist) && firstErr==nil{firstErr=err}
+   continue
+  }
+  // Remember every ancestor so emptied release folders get tidied up.
+  for dir:=filepath.Dir(local);dir!="." && dir!=string(filepath.Separator);dir=filepath.Dir(dir){
+   directories[dir]=true
+  }
+ }
+ // Deepest first: a nested folder can only be removed once its children are gone.
+ ordered:=make([]string,0,len(directories))
+ for dir:=range directories{ordered=append(ordered,dir)}
+ sort.Slice(ordered,func(i,j int)bool{return len(ordered[i])>len(ordered[j])})
+ for _,dir:=range ordered{
+  // Remove only succeeds on an empty directory, which is exactly the guard we
+  // want: a folder still holding another torrent's files is left alone.
+  _=root.Remove(dir)
+ }
+ return firstErr
+}
+
+// deletePlaybackCacheLocked drops cached transcodes of this torrent's files.
+// Without it, a re-added movie would serve a stale transcode of the old bytes.
+func (e *engine) deletePlaybackCacheLocked(item *entry){
+ if e.cacheDir==""{return}
+ for _,path:=range e.torrentFilesLocked(item){
+  key:=mkvKey(item.hash,path)
+  _=os.Remove(filepath.Join(e.cacheDir,key+".mp4"))
+  _=os.Remove(filepath.Join(e.cacheDir,key+".json"))
+  _=os.Remove(filepath.Join(e.cacheDir,key+".part.mp4"))
+ }
+}
+
+// action applies a queue verb. deleteFiles only applies to "remove" and opts
+// into deleting the downloaded payload; the default keeps files on disk.
+func (e *engine) action(hash,action string,deleteFiles bool)error{
  e.mu.Lock();defer e.mu.Unlock()
  item:=e.entries[hash];if item==nil{return errors.New("torrent not found")}
  switch action{
@@ -501,10 +586,20 @@ func (e *engine) action(hash,action string)error{
    item.torrent.Drop()
    item.torrent=nil
   }
-  // Delete the cached filenames and queue entry together. Rejected torrents
-  // never downloaded payload bytes, so there are no owned movie files to
-  // remove from the shared downloads directory. Do not remove files by
-  // untrusted metadata paths: they may overlap other valid torrents.
+  // Stop the torrent before touching its files, then unlink the payload when
+  // asked. Rejected torrents never requested payload pieces, so they have
+  // nothing to delete. Paths always come from the torrent's own metadata or
+  // the inspected manifest, never from the request.
+  if deleteFiles && item.rejectionReason==""{
+   if err:=e.deleteTorrentFilesLocked(item);err!=nil{
+    // The queue row is already gone; report the file error rather than
+    // pretending the delete was complete.
+    item.fileManifest=nil
+    delete(e.entries,hash)
+    return fmt.Errorf("torrent removed, but some files could not be deleted: %w",err)
+   }
+   e.deletePlaybackCacheLocked(item)
+  }
   item.fileManifest=nil
   item.fileInspectionError=""
   if item.fileInspectionCancel!=nil {
@@ -677,7 +772,16 @@ func (a *application) addMagnet(w http.ResponseWriter,r *http.Request){
 func (a *application) torrentAction(w http.ResponseWriter,r *http.Request){
  hash:=r.PathValue("hash");action:=r.PathValue("action")
  if !regexp.MustCompile("^[0-9a-f]{40}$").MatchString(hash){fail(w,400,"invalid torrent hash");return}
- err:=a.engine.action(hash,action)
+ // The body is optional for pause/resume, so a bodyless request keeps the
+ // historical "leave the payload on disk" behaviour. Only an explicit
+ // {"deleteFiles":true} opts into removing the downloaded movie.
+ var req struct{
+  DeleteFiles bool `json:"deleteFiles"`
+ }
+ if r.ContentLength>0{
+  if !readJSON(w,r,&req){return}
+ }
+ err:=a.engine.action(hash,action,action=="remove" && req.DeleteFiles)
  if err!=nil{fail(w,400,err.Error());return}
  respond(w,200,map[string]bool{"ok":true})
 }

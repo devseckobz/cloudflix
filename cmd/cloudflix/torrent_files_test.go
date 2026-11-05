@@ -118,7 +118,7 @@ func TestDeleteRejectedClearsDatabaseAndMemoryWithoutTouchingOtherMovies(t *test
  other:=filepath.Join(downloads,"other-movie.mp4")
  if err:=os.WriteFile(other,[]byte("existing legitimate download"),0600);err!=nil{t.Fatal(err)}
  e:=&engine{db:db,entries:map[string]*entry{hash:item},downloads:downloads}
- if err:=e.action(hash,"remove");err!=nil{t.Fatal(err)}
+ if err:=e.action(hash,"remove",false);err!=nil{t.Fatal(err)}
  if e.entries[hash]!=nil || item.fileManifest!=nil{t.Fatal("rejected torrent or temporary file list not cleared")}
  var count int
  if err:=db.QueryRow("SELECT COUNT(*) FROM torrents WHERE hash=?",hash).Scan(&count);err!=nil{t.Fatal(err)}

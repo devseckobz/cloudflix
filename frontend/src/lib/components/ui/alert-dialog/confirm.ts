@@ -18,6 +18,20 @@ import ConfirmHost from './confirm-host.svelte'
  * })
  * if (!ok) return
  * ```
+ *
+ * A destructive action that can also discard data can declare a third choice.
+ * `confirmDialog` then resolves to `'cancel' | 'confirm' | 'alternate'`, so the
+ * caller can tell "keep the files" apart from "delete the files":
+ *
+ * ```ts
+ * const choice = await confirmDialog({
+ *   title: 'Delete this torrent?',
+ *   alternateLabel: 'Delete files too',
+ *   alternateDestructive: true,
+ * })
+ * if (choice === 'cancel') return
+ * await remove(hash, choice === 'alternate')
+ * ```
  */
 export type ConfirmOptions = {
 	/** Dialog heading. Required — it is also the accessible name. */
@@ -30,11 +44,26 @@ export type ConfirmOptions = {
 	cancelLabel?: string
 	/** Renders the confirm button with the destructive variant. */
 	destructive?: boolean
+	/**
+	 * Optional third, more destructive action. When present it renders last and
+	 * the dialog resolves to a `ConfirmResult` instead of a boolean.
+	 */
+	alternateLabel?: string
+	/** Renders the alternate button with the destructive variant. */
+	alternateDestructive?: boolean
+	/** Supporting detail shown under the alternate button, e.g. what it deletes. */
+	alternateHint?: string
 }
+
+/** `true` when a two-choice dialog is confirmed, `false` otherwise. */
+export type ConfirmAnswer = ConfirmResult | boolean
+
+export type ConfirmResult = 'cancel' | 'confirm' | 'alternate'
 
 export type ConfirmRequest = ConfirmOptions & {
 	id: number
-	resolve: (ok: boolean) => void
+	/** Resolves a tri-state answer for three-button dialogs, else a boolean. */
+	resolve: (answer: ConfirmAnswer) => void
 }
 
 let nextId = 1
@@ -56,13 +85,17 @@ function ensureHost() {
 }
 
 /**
- * Opens a modal confirmation dialog and resolves `true` when the user confirms,
- * `false` when they cancel, press Escape, or the dialog is otherwise dismissed.
+ * Opens a modal confirmation dialog and resolves when the user answers.
+ *
+ * Resolves `true`/`false` for a normal two-button dialog, or
+ * `'cancel' | 'confirm' | 'alternate'` when `alternateLabel` is provided.
+ * Cancelling, pressing Escape, or dismissing always resolves to the falsy
+ * answer (`false` / `'cancel'`).
  *
  * Concurrent calls are queued and shown one at a time.
  */
-export function confirmDialog(options: ConfirmOptions): Promise<boolean> {
-	return new Promise<boolean>((resolve) => {
+export function confirmDialog(options: ConfirmOptions): Promise<ConfirmAnswer> {
+	return new Promise<ConfirmAnswer>((resolve) => {
 		queue.push({ ...options, id: nextId++, resolve })
 		ensureHost()
 		notify()
@@ -78,9 +111,20 @@ export function subscribeConfirm(fn: (request: ConfirmRequest | null) => void) {
 	}
 }
 
-/** @internal used by the host component */
-export function settleConfirm(ok: boolean) {
+/**
+ * @internal used by the host component.
+ *
+ * Settles the current request with a tri-state answer. Callers that asked for a
+ * plain yes/no receive a boolean so existing call sites keep working.
+ */
+export function settleConfirm(answer: ConfirmResult) {
 	const request = queue.shift()
-	request?.resolve(ok)
+	if (request) {
+		request.resolve(
+			request.alternateLabel
+				? answer
+				: answer === 'confirm',
+		)
+	}
 	notify()
 }

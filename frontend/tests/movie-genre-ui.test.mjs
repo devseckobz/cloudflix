@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 
 const component=readFileSync(new URL('../src/App.svelte',import.meta.url),'utf8')
 const styles=readFileSync(new URL('../src/app.css',import.meta.url),'utf8')
+const theme=readFileSync(new URL('../src/theme.css',import.meta.url),'utf8')
 const home=component.slice(component.indexOf('<section class="movie-library"'),component.indexOf("{:else if page==='settings'}"))
 
 test('movie cards show separate red year and warm-yellow genre badges',()=>{
@@ -14,8 +15,11 @@ test('movie cards show separate red year and warm-yellow genre badges',()=>{
  assert.match(home,/\{movie\.year\|\|'Unknown year'\}/)
  assert.match(home,/\{#if movie\.genre\}/)
  assert.match(home,/\{movie\.genre\}/)
- assert.match(styles,/\.movie-year-badge\s*\{[^}]*color:#ff6260/)
- assert.match(styles,/\.movie-genre-badge\s*\{[^}]*color:#e6b95b/)
+ // The two badge colours are semantic tokens, not literal hex values.
+ assert.match(theme,/--year:\s*oklch\(/)
+ assert.match(theme,/--genre:\s*oklch\(/)
+ assert.match(styles,/\.movie-year-badge\s*\{[^}]*color:\s*var\(--year\)/)
+ assert.match(styles,/\.movie-genre-badge\s*\{[^}]*color:\s*var\(--genre\)/)
 })
 
 test('genre badges appear in player and queue without changing ratings',()=>{

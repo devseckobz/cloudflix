@@ -42,8 +42,15 @@ test('theater ignores backdrop clicks and only its close button dismisses it',()
  const backdrop=footer.match(/<div class="modal-backdrop cinema-player-backdrop"[^>]*>/)?.[0]
  assert.ok(backdrop,'theater backdrop must be present')
  assert.doesNotMatch(backdrop,/onclick=/)
- assert.match(footer,/<button class="cinema-player-close" onclick=\{closeMovie\} aria-label="Close player"/)
+ assert.match(footer,/<Button[^>]*class="cinema-player-close"[^>]*onclick=\{closeMovie\}[^>]*aria-label="Close player"/)
  assert.equal((footer.match(/onclick=\{closeMovie\}/g)||[]).length,1)
+})
+
+test('Escape dismisses the theater without touching the Files dialog',()=>{
+ assert.match(component,/const handleEscape=\(event:KeyboardEvent\)=>\{/)
+ assert.match(component,/if\(event\.key==='Escape'&&selected&&!fileViewer\)closeMovie\(\)/)
+ assert.match(component,/window\.addEventListener\('keydown',handleEscape\)/)
+ assert.match(component,/window\.removeEventListener\('keydown',handleEscape\)/)
 })
 
 test('CC toggle reveals subtitle shortcuts and only one text track is active',()=>{

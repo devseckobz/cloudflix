@@ -8,8 +8,8 @@ const goRoute=readFileSync(new URL('../../cmd/cloudflix/main.go',import.meta.url
 const downloader=component.slice(component.indexOf('<div class="dashboard-content download-page">'),component.indexOf('   {/if}\n   <footer'))
 
 test('copy magnet sits directly before delete on every queue row',()=>{
- const copy=downloader.indexOf('class="queue-copy-button"')
- const remove=downloader.indexOf('class="danger" title={\'Remove \'+m.title')
+ const copy=downloader.indexOf('class="queue-copy-button queue-icon-button"')
+ const remove=downloader.indexOf('class="danger queue-icon-button"')
  assert.ok(copy>0 && remove>copy,'Copy button must precede Delete')
  assert.match(downloader,/onclick=\{\(\)=>copyTorrentMagnet\(m\)\}/)
  assert.match(downloader,/aria-label=\{'Copy magnet link for '\+m\.title\}/)

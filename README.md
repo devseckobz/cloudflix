@@ -64,7 +64,21 @@ additional space for its MP4 cache.
 
 Home shows movie posters, release years and TMDB genres (search and 10 movies per page). Play completed **MP4 or MKV** movies in the theater with CC and fullscreen. MKV files are prepared as browser-compatible MP4 when opened; text subtitles embedded in MKV (SRT/ASS) are available through CC. Image-based subtitles such as PGS are not currently supported.
 
-Cloudflix inspects magnet metadata **before downloading content**. Magnets without an MP4 or MKV are rejected, and only `.mp4`, `.mkv` and `.srt` files are selected. Use **Files** in the Downloader queue to inspect included filenames, including rejected torrents. Rejected file listings are temporary (memory-only). After a restart, **Files** can fetch the torrent metadata again from peers without downloading its payload. Deleting a rejected torrent clears its record and cached file list. BitTorrent pieces may contain a few bytes from neighboring files at boundaries. The Downloader has a **Copy magnet** icon next to Delete. MKV playback needs FFmpeg (`ffmpeg` and `ffprobe`) on the VPS; the terminal installer/updater attempts to install it on Ubuntu/Debian. MKV preparation can take time and creates converted files in `/var/lib/cloudflix/playback-cache`.
+Cloudflix inspects magnet metadata **before downloading content**. Magnets without an MP4 or MKV are rejected, and only `.mp4`, `.mkv` and `.srt` files are selected. Use **Files** in the Downloader queue to inspect included filenames, including rejected torrents. Rejected file listings are temporary (memory-only). After a restart, **Files** can fetch the torrent metadata again from peers without downloading its payload. Deleting a rejected torrent clears its record and cached file list. BitTorrent pieces may contain a few bytes from neighboring files at boundaries. The Downloader has a **Copy magnet** icon next to Delete. Release binaries include private, static FFmpeg tools for MKV playback; no FFmpeg system package or manual installation is required, including when updating from the browser. MKV preparation can take time and creates converted files in `/var/lib/cloudflix/playback-cache`.
+
+## Built-in media tools
+
+Cloudflix embeds compressed `ffmpeg` and `ffprobe` executables for its release
+architecture. On first MKV playback, it verifies and extracts them beneath
+`/var/lib/cloudflix/runtime-tools`, using private permissions. This needs extra
+disk space and makes the release binary larger. Existing PINs, settings and movies
+are preserved. Older updaters work because the tools travel inside the app binary.
+
+The tools are built from pinned FFmpeg and x264 sources by
+`scripts/build-media-tools.sh`. GitHub Releases include their corresponding source
+archive, build recipe, checksums and GPL notices. Cloudflix itself remains MIT;
+the separately executed media tools carry their own licenses. Source-only local
+builds fall back to system tools unless the generated payload is present.
 
 ## Update
 

@@ -11,3 +11,5 @@ static/dist/*
 dist/
 tmp/
 .DS_Store
+internal/mediatools/payload/*
+!internal/mediatools/payload/README.txt

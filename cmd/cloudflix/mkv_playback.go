@@ -18,6 +18,8 @@ import (
  "strings"
  "sync"
  "time"
+
+ "github.com/devseckobz/cloudflix/internal/mediatools"
 )
 
 const (
@@ -177,14 +179,14 @@ func (a *application) mkvPrepare(w http.ResponseWriter,r *http.Request){
   respond(w,http.StatusOK,status)
   return
  }
- if _,err:=exec.LookPath("ffmpeg");err!=nil{
+ if _,err:=mediatools.Resolve(a.dataDir,"ffmpeg");err!=nil{
   source.Close()
-  fail(w,http.StatusServiceUnavailable,"MKV playback requires FFmpeg. Install the ffmpeg package on your VPS.")
+  fail(w,http.StatusServiceUnavailable,"Built-in media tools are unavailable. Check available disk space and update Cloudflix to restore them.")
   return
  }
- if _,err:=exec.LookPath("ffprobe");err!=nil{
+ if _,err:=mediatools.Resolve(a.dataDir,"ffprobe");err!=nil{
   source.Close()
-  fail(w,http.StatusServiceUnavailable,"MKV playback requires ffprobe. Install the ffmpeg package on your VPS.")
+  fail(w,http.StatusServiceUnavailable,"Built-in media tools are unavailable. Check available disk space and update Cloudflix to restore them.")
   return
  }
  if a.playback==nil{
@@ -252,12 +254,16 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
  a.updateMKVJob(job,"processing","Preparing a browser-compatible MP4. Large movies may take some time.")
  ctx,cancel:=context.WithTimeout(context.Background(),3*time.Hour)
  defer cancel()
+ ffmpeg,err:=mediatools.Resolve(a.dataDir,"ffmpeg")
+ if err!=nil{a.updateMKVJob(job,"error","Built-in video conversion is unavailable. Check storage and update Cloudflix.");return}
+ ffprobe,err:=mediatools.Resolve(a.dataDir,"ffprobe")
+ if err!=nil{a.updateMKVJob(job,"error","Built-in video inspection is unavailable. Check storage and update Cloudflix.");return}
  dir,err:=a.mkvCacheDir()
  if err!=nil{a.updateMKVJob(job,"error","Playback cache is unavailable.");return}
  output:=filepath.Join(dir,key+".mp4")
  temporary:=filepath.Join(dir,key+".part.mp4")
  defer os.Remove(temporary)
- probeBytes,err:=commandFromMKV(ctx,"ffprobe",source,
+ probeBytes,err:=commandFromMKV(ctx,ffprobe,source,
   "-v","error","-show_entries","stream=index,codec_type,codec_name,pix_fmt:stream_tags=language,title",
   "-of","json","-i","/proc/self/fd/3")
  if err!=nil{
@@ -301,8 +307,8 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
   args=append(args,"-c:a","aac","-b:a","160k")
  }
  args=append(args,"-movflags","+faststart","-fs",strconv.FormatInt(maxConvertedMP4,10),temporary)
- if _,err:=commandFromMKV(ctx,"ffmpeg",source,args...);err!=nil{
-  a.updateMKVJob(job,"error","MKV conversion failed. Check available disk space and server FFmpeg support.")
+ if _,err:=commandFromMKV(ctx,ffmpeg,source,args...);err!=nil{
+  a.updateMKVJob(job,"error","MKV conversion failed. Check available disk space and whether the movie file is valid.")
   return
  }
  converted,err:=os.Stat(temporary)
@@ -321,7 +327,7 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
   if index<0||index>200{continue}
   filename:=filepath.Join(dir,key+"."+strconv.Itoa(index)+".vtt")
   temp:=filename+".part"
-  _,err:=commandFromMKV(ctx,"ffmpeg",source,"-nostdin","-hide_banner","-loglevel","error",
+  _,err:=commandFromMKV(ctx,ffmpeg,source,"-nostdin","-hide_banner","-loglevel","error",
    "-y","-i","/proc/self/fd/3","-map","0:"+strconv.Itoa(index),"-c:s","webvtt","-f","webvtt",temp)
   if err!=nil{os.Remove(temp);continue}
   stat,err:=os.Stat(temp)

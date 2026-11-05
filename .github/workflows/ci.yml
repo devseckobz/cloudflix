@@ -35,7 +35,7 @@ jobs:
       - name: Vet backend
         run: go vet ./...
       - name: Validate deployment shell scripts
-        run: bash -n installer/install.sh installer/update.sh installer/pin.sh installer/uninstall.sh installer/setup-web-updater.sh installer/web-update-worker.sh
+        run: bash -n installer/install.sh installer/update.sh installer/pin.sh installer/uninstall.sh installer/setup-web-updater.sh installer/web-update-worker.sh scripts/build-media-tools.sh
       - name: Verify installer refuses occupied port 80
         run: |
           set -euo pipefail

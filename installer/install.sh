@@ -127,19 +127,7 @@ if ! id cloudflix >/dev/null 2>&1;then
 fi
 install -d -o cloudflix -g cloudflix -m 0700 "$DATA"
 install -d -o root -g root -m 0700 /etc/cloudflix
-# MKV theater playback requires FFmpeg/ffprobe. New installs and interactive
-# updates install the distro package on Ubuntu/Debian. Browser updates never
-# modify system packages without a terminal.
-if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1;then
- if command -v apt-get >/dev/null 2>&1 && [[ "${CLOUDFLIX_NONINTERACTIVE:-0}" != "1" ]];then
-  info "Installing FFmpeg for MKV playback..."
-  if ! (export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq --no-install-recommends ffmpeg);then
-   info "WARNING: FFmpeg could not be installed. MKV playback will require: sudo apt-get install ffmpeg"
-  fi
- else
-  info "Note: MKV playback needs ffmpeg and ffprobe installed on your VPS."
- fi
-fi
+# Release binaries carry private, static media tools, including for web updates.
 install -m 0755 "$work/cloudflix" "$BIN"
 # Configure the PIN with the service account before starting the HTTP server.
 if ! printf '%s\n' "$PIN" | runuser -u cloudflix -- env CLOUDFLIX_DATA_DIR="$DATA" "$BIN" pin set;then

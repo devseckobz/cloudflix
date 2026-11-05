@@ -25,7 +25,8 @@
  import {createVersionReloadMonitor} from './lib/version-reload.js'
  import {applySubtitleSelection} from './lib/subtitles.js'
  import {copyToClipboard} from './lib/clipboard.js'
- import { Film, House, Download, Search, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, Shield, Clapperboard, AlertCircle, Star, ChevronLeft, ChevronRight, Maximize2, MonitorPlay, MonitorSmartphone, Users, RefreshCw, ArrowUpCircle, Files, Copy } from '@lucide/svelte'
+ import {browserLabel,clientDetail,describeSession} from './lib/user-agent.js'
+ import { Film, House, Download, Search, Pause, Play, Trash2, HardDrive, HardDriveDownload, Database, Settings, LogOut, Plus, X, CheckCircle2, Shield, Clapperboard, AlertCircle, Star, ChevronLeft, ChevronRight, Maximize2, MonitorPlay, MonitorSmartphone, Users, RefreshCw, ArrowUpCircle, Files, Copy } from '@lucide/svelte'
 
  type Movie = {hash:string,title:string,year:string,genre:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
  type InspectedFile = {path:string,size:number,selected:boolean}
@@ -121,13 +122,6 @@
   if(diff<86400)return Math.floor(diff/3600)+'h ago'
   if(diff<604800)return Math.floor(diff/86400)+'d ago'
   return formatDate(unix)
- }
- // A short, human label from the raw User-Agent: "Chrome · Windows".
- const browserLabel=(userAgent:string):string=>{
-  const value=userAgent||''
-  const browser=/Edg\//.test(value)?'Edge':/OPR\/|Opera/.test(value)?'Opera':/Firefox\//.test(value)?'Firefox':/Chrome\//.test(value)?'Chrome':/Safari\//.test(value)?'Safari':/curl\//i.test(value)?'curl':'Unknown browser'
-  const platform=/Windows/.test(value)?'Windows':/Android/.test(value)?'Android':/iPhone|iPad|iPod/.test(value)?'iOS':/Mac OS X|Macintosh/.test(value)?'macOS':/Linux/.test(value)?'Linux':''
-  return platform?browser+' · '+platform:browser
  }
  const poster=(path:string)=>path?'https://image.tmdb.org/t/p/w500'+path:''
  const backdrop=(path:string)=>path?'https://image.tmdb.org/t/p/w1280'+path:''
@@ -853,18 +847,23 @@
       {:else if sessions.length}
        <div class="session-list" role="list">
         {#each sessions as session (session.id)}
+         {@const client=describeSession(session.userAgent)}
+         {@const detail=clientDetail(session.userAgent)}
          <article class="session-item" class:current={session.current} role="listitem">
           <Avatar.Root class="session-avatar" aria-hidden="true">
-           <Avatar.Fallback>{browserLabel(session.userAgent).slice(0,1)}</Avatar.Fallback>
+           <Avatar.Fallback>{client.initial}</Avatar.Fallback>
           </Avatar.Root>
           <div class="session-item-main">
            <div class="session-item-heading">
-            <h3>{browserLabel(session.userAgent)}</h3>
+            <h3 title={client.label}>{client.label}</h3>
             {#if session.current}<Badge variant="secondary" class="session-badge">This device</Badge>{/if}
-            <span class="status-pill" class:watching={session.status==='watching'}>{session.status==='watching'?'Watching':'Idle'}</span>
+            <!-- A row that still shows a saved position is "Paused", not "Idle":
+                 the old label contradicted the progress line right beneath it. -->
+            <span class="status-pill" class:watching={session.status==='watching'} class:paused={session.status!=='watching'&&session.watching}>{session.status==='watching'?'Watching':session.watching?'Paused':'Idle'}</span>
            </div>
            <p class="session-meta">
             <span>{session.ip||'Unknown IP'}</span>
+            {#if detail}<span class="session-sep" aria-hidden="true">·</span><span class="session-client" title={session.userAgent||'No user agent recorded'}>{detail}</span>{/if}
             <span class="session-sep" aria-hidden="true">·</span>
             <span>Signed in {formatDate(session.createdAt)}</span>
             <span class="session-sep" aria-hidden="true">·</span>
@@ -912,14 +911,13 @@
        <h1>Downloads</h1>
        <p>Add movies and track their progress.</p>
       </div>
-      <span class="downloader-online"><span class:online={connected} class="status-dot"></span>{connected?'Connected':'Reconnecting'}</span>
      </div>
      <div class="stat-grid downloader-stats">
       <Card.Root class="stat"><div class="stat-icon"><Clapperboard size={17}/></div><div><span>All downloads</span><strong>{movies.length}</strong></div></Card.Root>
       <Card.Root class="stat"><div class="stat-icon"><Download size={17}/></div><div><span>Downloading</span><strong>{active}</strong></div></Card.Root>
       <Card.Root class="stat"><div class="stat-icon"><CheckCircle2 size={17}/></div><div><span>Completed</span><strong>{completed}</strong></div></Card.Root>
-      <Card.Root class="stat"><div class="stat-icon"><HardDrive size={17}/></div><div><span>Downloaded</span><strong>{formatBytes(movies.reduce((a,m)=>a+m.completed,0))}</strong></div></Card.Root>
-      <Card.Root class="stat"><div class="stat-icon"><HardDrive size={17}/></div><div><span>Space for downloads</span><strong>{storage?.known?formatBytes(storage.available):'—'}</strong></div></Card.Root>
+      <Card.Root class="stat"><div class="stat-icon"><HardDriveDownload size={17}/></div><div><span>Downloaded</span><strong>{formatBytes(movies.reduce((a,m)=>a+m.completed,0))}</strong></div></Card.Root>
+      <Card.Root class="stat"><div class="stat-icon"><Database size={17}/></div><div><span>Space for downloads</span><strong>{storage?.known?formatBytes(storage.available):'—'}</strong></div></Card.Root>
      </div>
      {#if storage&&!storage.known}
       <Alert.Root class="storage-overview">

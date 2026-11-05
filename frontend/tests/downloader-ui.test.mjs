@@ -23,6 +23,23 @@ test('Downloader uses compact stats, a simple magnet form, and a filtered queue'
  assert.doesNotMatch(downloader,/100\.0% complete/)
 })
 
+test('stat cards stay a compact horizontal row and use distinct icons',()=>{
+ // The Card primitive ships `flex flex-col`; without an explicit row direction
+ // these rendered as 118px centred stacks instead of 73px chips.
+ assert.match(css,/\.stat\s*\{[\s\S]*?flex-direction:\s*row/)
+ const icons=[...downloader.matchAll(/<div class="stat-icon"><(\w+) size=\{17\}\/><\/div>/g)].map(m=>m[1])
+ assert.equal(icons.length,5,'all five stat cards must have an icon')
+ // Five cards, five different glyphs: two cards sharing HardDrive read as one stat.
+ assert.equal(new Set(icons).size,5,'stat card icons must be distinct, got '+icons.join(', '))
+})
+
+test('the connection indicator is not duplicated on the Downloader page',()=>{
+ // It already lives in the topbar; a second pill next to the page title was noise.
+ assert.match(header,/class="topbar-status"/)
+ assert.doesNotMatch(downloader,/downloader-online/)
+ assert.doesNotMatch(css,/\.downloader-online/)
+})
+
 test('Completed downloads show a watch action, not an oversized progress bar',()=>{
  assert.match(downloader,/\{#if m\.status==='completed'\}/)
  assert.match(downloader,/class="queue-watch-button"/)

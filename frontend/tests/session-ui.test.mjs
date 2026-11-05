@@ -48,11 +48,21 @@ test('Settings lists active sessions with IP, browser, dates, status and movie p
  assert.match(settings,/settings-panel-intro/)
  assert.match(settings,/<h2>Active Sessions<\/h2>/)
  assert.match(settings,/\{#each sessions as session \(session\.id\)\}/)
- assert.match(settings,/\{browserLabel\(session\.userAgent\)\}/)
+ // The heading now renders the full parsed client label (browser + version +
+ // platform) instead of the bare browser/platform pair, so it can distinguish
+ // iPad from iPhone and a WebView from Chrome.
+ assert.match(settings,/\{@const client=describeSession\(session\.userAgent\)\}/)
+ assert.match(settings,/<h3 title=\{client\.label\}>\{client\.label\}<\/h3>/)
+ assert.match(settings,/<Avatar\.Fallback>\{client\.initial\}<\/Avatar\.Fallback>/)
+ // The revoke button's accessible name still uses the short label helper.
+ assert.match(settings,/aria-label=\{'Sign out '\+browserLabel\(session\.userAgent\)\+' session'\}/)
  assert.match(settings,/\{session\.ip\|\|'Unknown IP'\}/)
  assert.match(settings,/Signed in \{formatDate\(session\.createdAt\)\}/)
  assert.match(settings,/Active \{formatRelative\(session\.lastSeen\)\}/)
- assert.match(settings,/class="status-pill" class:watching=\{session\.status==='watching'\}/)
+ // A saved resume point with no live playback reads "Paused", not "Idle": the
+ // old label contradicted the progress line rendered directly beneath it.
+ assert.match(settings,/class="status-pill" class:watching=\{session\.status==='watching'\} class:paused=\{session\.status!=='watching'&&session\.watching\}/)
+ assert.match(settings,/\{session\.status==='watching'\?'Watching':session\.watching\?'Paused':'Idle'\}/)
  assert.match(settings,/\{session\.watching\.title\}/)
  assert.match(settings,/\{formatPosition\(session\.watching\.position\)\}/)
  assert.match(settings,/\{#if session\.current\}<Badge variant="secondary" class="session-badge">This device<\/Badge>\{\/if\}/)
@@ -83,6 +93,7 @@ test('sessions card has an explicit loading and empty state',()=>{
 
 test('session styles use design tokens only',()=>{
  assert.match(css,/\.session-item\s*\{[\s\S]*?border:\s*1px solid var\(--border\)/)
+ assert.match(css,/\.status-pill\.paused\s*\{[\s\S]*?color:\s*var\(--year\)/)
  assert.match(css,/\.session-item\.current\s*\{[\s\S]*?var\(--primary\)/)
  assert.match(css,/\.session-meta\s*\{[\s\S]*?color:\s*var\(--muted-foreground\)/)
  assert.match(css,/\.session-watching svg\s*\{\s*flex:\s*0 0 auto;\s*color:\s*var\(--primary\)/)

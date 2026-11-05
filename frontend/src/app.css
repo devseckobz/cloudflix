@@ -653,18 +653,6 @@
   gap: 16px;
   margin-bottom: 24px;
 }
-.downloader-online {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 11px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--card);
-  font-size: 11.5px;
-  color: var(--muted-foreground);
-  white-space: nowrap;
-}
 
 .downloader-stats {
   display: grid;
@@ -672,8 +660,13 @@
   gap: 11px;
   margin: 0 0 16px;
 }
+/* The Card primitive ships `flex flex-col`, which turned these into tall
+   centred stacks: icon above a centred label/value, 118px instead of 73px.
+   This rule is authored for a compact horizontal chip, so state the row
+   direction explicitly rather than relying on the primitive's default. */
 .stat {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 11px;
   padding: 14px;
@@ -1354,6 +1347,13 @@
   background: color-mix(in oklch, var(--success) 12%, transparent);
   color: var(--success);
 }
+/* A session holding a resume point but not playing right now. Amber, not
+   green: it is neither active playback nor a truly idle tab. */
+.status-pill.paused {
+  border-color: color-mix(in oklch, var(--year) 34%, transparent);
+  background: color-mix(in oklch, var(--year) 12%, transparent);
+  color: var(--year);
+}
 .session-meta {
   display: flex;
   align-items: center;
@@ -1366,6 +1366,15 @@
   font-variant-numeric: tabular-nums;
 }
 .session-sep { color: var(--border); }
+/* Platform/build detail: informative but never competes with the IP or dates. */
+.session-client {
+  min-width: 0;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in oklch, var(--muted-foreground) 78%, transparent);
+}
 .session-watching {
   display: flex;
   align-items: center;

@@ -51,6 +51,9 @@ type entry struct {
  // requested file (~0.5 MB of allocations for a 20k-piece movie). A verified
  // file stays verified.
  verifiedFiles map[string]bool
+ // Files whose background transcode has already been requested, so a download
+ // that finished is prepared once rather than on every tick.
+ prewarmed map[string]bool
  fileManifest *torrentFileManifest // transient torrent metadata; never stored in SQLite
  inspectingFiles bool
  inspectedFilesOnce bool
@@ -67,6 +70,9 @@ type engine struct{
  entries map[string]*entry
  activeFileInspections int
  diskSpace func(string)(uint64,uint64,error)
+ // Set by main to the transcoder entry point; nil in tests that run no media
+ // tools, which leaves prewarming inert rather than panicking.
+ prewarm func(hash,path string)
 }
 // Older Cloudflix SQLite catalogs did not store TMDB ratings.
 // Add the column in place without removing any existing movies or downloads.
@@ -560,8 +566,8 @@ func (e *engine) deletePlaybackCacheLocked(item *entry){
  }
 }
 
-// action applies a queue verb. deleteFiles only applies to "remove" and opts
-// into deleting the downloaded payload; the default keeps files on disk.
+// action applies a queue verb. deleteFiles only applies to "remove": true
+// (the default at the HTTP layer) removes the payload along with the entry.
 func (e *engine) action(hash,action string,deleteFiles bool)error{
  e.mu.Lock();defer e.mu.Unlock()
  item:=e.entries[hash];if item==nil{return errors.New("torrent not found")}
@@ -683,8 +689,66 @@ func (e *engine) run(ctx context.Context){
  ticker:=time.NewTicker(10*time.Second);defer ticker.Stop()
  for{
   e.refreshMetadata(ctx)
+  e.prewarmCompleted(ctx)
   select{case <-ctx.Done():return;case <-ticker.C:}
  }
+}
+
+// completedMKVFilesLocked lists the verified .mkv files of every finished
+// torrent, keyed by hash. Only files that are fully downloaded and verified
+// qualify: a partial file cannot be transcoded.
+func (e *engine) completedMKVFilesLocked()map[string][]string{
+ finished:=make(map[string][]string)
+ for hash,item:=range e.entries{
+  if item==nil || item.rejectionReason!="" || !item.validated || item.torrent==nil{continue}
+  tt:=item.torrent
+  if tt.Info()==nil{continue}
+  size,completed,_:=selectedFileStats(tt)
+  if size<=0 || !e.completedLocked(item,tt,size,completed){continue}
+  for _,path:=range e.torrentFilesLocked(item){
+   if strings.EqualFold(filepath.Ext(path),".mkv"){finished[hash]=append(finished[hash],path)}
+  }
+ }
+ return finished
+}
+
+// prewarmCompleted converts finished MKVs in the background so the movie is
+// ready to play the moment the user clicks Watch. Previously the transcode only
+// started on that click, so a feature-length movie meant staring at "Preparing
+// MKV for playback" for 20+ minutes after the download had already completed.
+func (e *engine) prewarmCompleted(ctx context.Context){
+ if e.prewarm==nil{return}
+ files:=e.finishedMKVs()
+ if len(files)==0{return}
+ for _,target:=range files{
+  select{case <-ctx.Done():return;default:}
+  e.prewarm(target.hash,target.path)
+ }
+}
+
+// finishedMKV is one completed .mkv awaiting preparation.
+type finishedMKV struct{hash,path string}
+
+// finishedMKVs returns the completed MKV files not yet handed to the transcoder.
+func (e *engine) finishedMKVs()[]finishedMKV{
+ e.mu.Lock()
+ defer e.mu.Unlock()
+ pending:=make([]finishedMKV,0)
+ for hash,paths:=range e.completedMKVFilesLocked(){
+  item:=e.entries[hash]
+  if item==nil{continue}
+  for _,path:=range paths{
+   if item.prewarmed[path]{continue}
+   if item.prewarmed==nil{item.prewarmed=make(map[string]bool,2)}
+   item.prewarmed[path]=true
+   pending=append(pending,finishedMKV{hash:hash,path:path})
+  }
+ }
+ sort.Slice(pending,func(i,j int)bool{
+  if pending[i].hash!=pending[j].hash{return pending[i].hash<pending[j].hash}
+  return pending[i].path<pending[j].path
+ })
+ return pending
 }
 func (e *engine) refreshMetadata(ctx context.Context){
  type candidate struct{hash,title,year string}
@@ -772,16 +836,16 @@ func (a *application) addMagnet(w http.ResponseWriter,r *http.Request){
 func (a *application) torrentAction(w http.ResponseWriter,r *http.Request){
  hash:=r.PathValue("hash");action:=r.PathValue("action")
  if !regexp.MustCompile("^[0-9a-f]{40}$").MatchString(hash){fail(w,400,"invalid torrent hash");return}
- // The body is optional for pause/resume, so a bodyless request keeps the
- // historical "leave the payload on disk" behaviour. Only an explicit
- // {"deleteFiles":true} opts into removing the downloaded movie.
+ // Deleting a torrent now always removes its downloaded files too, so the
+ // queue entry and the payload can never disagree. {"keepFiles":true} remains
+ // available for tooling that deliberately wants the bytes left on disk.
  var req struct{
-  DeleteFiles bool `json:"deleteFiles"`
+  KeepFiles bool `json:"keepFiles"`
  }
  if r.ContentLength>0{
   if !readJSON(w,r,&req){return}
  }
- err:=a.engine.action(hash,action,action=="remove" && req.DeleteFiles)
+ err:=a.engine.action(hash,action,action=="remove" && !req.KeepFiles)
  if err!=nil{fail(w,400,err.Error());return}
  respond(w,200,map[string]bool{"ok":true})
 }

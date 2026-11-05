@@ -7,7 +7,7 @@
 	import AlertDialogTitle from './alert-dialog-title.svelte'
 	import AlertDialogDescription from './alert-dialog-description.svelte'
 	import AlertDialogFooter from './alert-dialog-footer.svelte'
-	import { settleConfirm, subscribeConfirm, type ConfirmRequest, type ConfirmResult } from './confirm.js'
+	import { settleConfirm, subscribeConfirm, type ConfirmRequest } from './confirm.js'
 
 	let request = $state<ConfirmRequest | null>(null)
 	let open = $state(false)
@@ -25,16 +25,16 @@
 		})
 	)
 
-	function answer(choice: ConfirmResult) {
+	function answer(ok: boolean) {
 		if (answered) return
 		answered = true
 		// settleConfirm() resolves the promise and notifies the subscriber, which
 		// closes the dialog (or swaps in the next queued request).
-		settleConfirm(choice)
+		settleConfirm(ok)
 	}
 </script>
 
-<AlertDialogRoot bind:open onOpenChange={(next) => { if (!next) answer('cancel') }}>
+<AlertDialogRoot bind:open onOpenChange={(next) => { if (!next) answer(false) }}>
 	<AlertDialogContent>
 		<AlertDialogHeader>
 			<AlertDialogTitle>{request?.title ?? ''}</AlertDialogTitle>
@@ -43,24 +43,15 @@
 			{/if}
 		</AlertDialogHeader>
 		<AlertDialogFooter>
-			<Button variant="outline" onclick={() => answer('cancel')}>
+			<Button variant="outline" onclick={() => answer(false)}>
 				{request?.cancelLabel ?? 'Cancel'}
 			</Button>
 			<Button
 				variant={request?.destructive ? 'destructive' : 'default'}
-				onclick={() => answer('confirm')}
+				onclick={() => answer(true)}
 			>
 				{request?.confirmLabel ?? 'Continue'}
 			</Button>
-			{#if request?.alternateLabel}
-				<Button
-					variant={request.alternateDestructive ? 'destructive' : 'default'}
-					onclick={() => answer('alternate')}
-					title={request.alternateHint}
-				>
-					{request.alternateLabel}
-				</Button>
-			{/if}
 		</AlertDialogFooter>
 	</AlertDialogContent>
 </AlertDialogRoot>

@@ -8,6 +8,7 @@ import (
  "encoding/json"
  "errors"
  "io"
+ "log"
  "net/http"
  "net/url"
  "os"
@@ -174,56 +175,82 @@ func (a *application) mkvStatus(w http.ResponseWriter,r *http.Request){
  w.Header().Set("Cache-Control","no-store")
  respond(w,http.StatusOK,a.mkvStatusFor(r.PathValue("hash"),r.URL.Query().Get("path")))
 }
-func (a *application) mkvPrepare(w http.ResponseWriter,r *http.Request){
- var request struct {Path string `json:"path"`}
- if !readJSON(w,r,&request){return}
- hash:=r.PathValue("hash")
- source,err:=a.validatedMKVSource(hash,request.Path)
- if err!=nil{fail(w,http.StatusBadRequest,err.Error());return}
- status:=a.mkvStatusFor(hash,request.Path)
- if status.State=="ready" {
+// startPrepare validates a source and queues its conversion, returning the
+// status to report. It is shared by the HTTP handler and the background
+// prewarm that runs when a download completes.
+func (a *application) startPrepare(hash,path string)(mkvResult,error){
+ source,err:=a.validatedMKVSource(hash,path)
+ if err!=nil{return mkvResult{},err}
+ if status:=a.mkvStatusFor(hash,path);status.State=="ready"{
   source.Close()
-  respond(w,http.StatusOK,status)
-  return
+  return status,nil
  }
  if _,err:=mediatools.Resolve(a.dataDir,"ffmpeg");err!=nil{
   source.Close()
-  fail(w,http.StatusServiceUnavailable,"Built-in media tools are unavailable. Check available disk space and update Cloudflix to restore them.")
-  return
+  return mkvResult{},errors.New("Built-in media tools are unavailable. Check available disk space and update Cloudflix to restore them.")
  }
  if _,err:=mediatools.Resolve(a.dataDir,"ffprobe");err!=nil{
   source.Close()
-  fail(w,http.StatusServiceUnavailable,"Built-in media tools are unavailable. Check available disk space and update Cloudflix to restore them.")
-  return
+  return mkvResult{},errors.New("Built-in media tools are unavailable. Check available disk space and update Cloudflix to restore them.")
  }
  if a.playback==nil{
   source.Close()
-  fail(w,http.StatusServiceUnavailable,"MKV transcoder is unavailable")
-  return
+  return mkvResult{},errors.New("MKV transcoder is unavailable")
  }
- key:=mkvKey(hash,request.Path)
+ key:=mkvKey(hash,path)
  m:=a.playback
  m.mu.Lock()
  if existing:=m.jobs[key];existing!=nil{
   if existing.state!="error"{
    m.mu.Unlock()
    source.Close()
-   respond(w,http.StatusAccepted,a.mkvStatusFor(hash,request.Path))
-   return
+   return a.mkvStatusFor(hash,path),nil
   }
   delete(m.jobs,key) // Permit a new attempt after a recoverable failure.
  }
  if len(m.jobs)>=32{
   m.mu.Unlock()
   source.Close()
-  fail(w,http.StatusTooManyRequests,"Too many playback conversions. Try later.")
-  return
+  return mkvResult{},errors.New("Too many playback conversions. Try later.")
  }
  job:=&mkvJob{state:"queued",message:"Waiting to prepare your MKV for browser playback"}
  m.jobs[key]=job
  m.mu.Unlock()
- go a.convertMKV(source,hash,request.Path,key,job)
- respond(w,http.StatusAccepted,a.mkvStatusFor(hash,request.Path))
+ go a.convertMKV(source,hash,path,key,job)
+ return a.mkvStatusFor(hash,path),nil
+}
+
+// prepareInBackground is the engine's completion hook: it converts a finished
+// MKV without waiting for anyone to click Watch, so the movie is playable as
+// soon as the download ends. Failures are deliberately silent — a movie that
+// cannot be prepared will still report its state when the user opens it.
+func (a *application) prepareInBackground(hash,path string){
+ if _,err:=a.startPrepare(hash,path);err!=nil{
+  log.Printf("Playback prewarm skipped for %s: %v",hash,err)
+ }
+}
+
+func (a *application) mkvPrepare(w http.ResponseWriter,r *http.Request){
+ var request struct {Path string `json:"path"`}
+ if !readJSON(w,r,&request){return}
+ status,err:=a.startPrepare(r.PathValue("hash"),request.Path)
+ if err!=nil{
+  if strings.Contains(err.Error(),"Too many playback conversions"){
+   fail(w,http.StatusTooManyRequests,err.Error())
+   return
+  }
+  if a.playback==nil{
+   fail(w,http.StatusServiceUnavailable,err.Error())
+   return
+  }
+  fail(w,http.StatusBadRequest,err.Error())
+  return
+ }
+ if status.State=="ready"{
+  respond(w,http.StatusOK,status)
+  return
+ }
+ respond(w,http.StatusAccepted,status)
 }
 func (a *application) updateMKVJob(job *mkvJob,state,message string){
  a.playback.mu.Lock()

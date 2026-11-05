@@ -617,33 +617,25 @@
    }
  }
  const action=async(m:Movie,verb:'pause'|'resume'|'remove')=>{
-   let deleteFiles=false
    if(verb==='remove'){
-     if(m.status==='rejected'){
-       // A rejected torrent never downloaded payload, so there is no third choice.
-       const ok=await confirmDialog({title:'Delete this rejected torrent?',description:'Its record and temporary file list will be removed.',confirmLabel:'Delete',destructive:true})
-       if(ok!==true)return
-     }else{
-       // Removing used to always keep the files, which left the disk full with
-       // no way to clean up from the UI. Offer both outcomes explicitly.
-       const choice=await confirmDialog({
-         title:'Delete this torrent?',
-         description:'The queue entry is removed either way. Choose whether the downloaded movie files on the server are deleted too.',
-         cancelLabel:'Cancel',
-         confirmLabel:'Remove from queue',
-         alternateLabel:'Delete files too',
-         alternateDestructive:true,
-         alternateHint:'Deletes the downloaded movie and subtitle files from the server.',
-       })
-       if(choice==='cancel'||choice===false)return
-       deleteFiles=choice==='alternate'
-     }
+     // One action, total cleanup: the queue entry and the downloaded files go
+     // together. Leaving orphaned files behind is what forced a separate
+     // cleanup pass, so there is no "keep files" choice to make here.
+     const ok=await confirmDialog({
+       title:'Delete '+m.title+'?',
+       description:m.status==='rejected'
+         ?'Its queue entry and temporary file list will be removed.'
+         :'Its queue entry and downloaded files will be deleted from the server. This cannot be undone.',
+       confirmLabel:'Delete',
+       destructive:true,
+     })
+     if(ok!==true)return
    }
    try{
-     await call('torrents/'+encodeURIComponent(m.hash)+'/'+verb,'POST',verb==='remove'?{deleteFiles}:{})
+     await call('torrents/'+encodeURIComponent(m.hash)+'/'+verb,'POST',verb==='remove'?{deleteFiles:true}:{})
      if(verb==='remove' && selected?.hash===m.hash)closeMovie()
      if(verb==='remove' && fileViewer?.hash===m.hash)closeFileViewer()
-     if(verb==='remove')notify(deleteFiles?'Torrent and downloaded files deleted':'Torrent removed. Files kept on the server.')
+     if(verb==='remove')notify('Torrent and downloaded files deleted')
      await refresh()
    }
    catch(e){fail((e as Error).message)}

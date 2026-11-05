@@ -89,6 +89,9 @@ func main() {
  a.engine,err=newEngine(downloads,db,a.tmdbKey)
  if err!=nil{log.Fatal(err)}
  defer a.engine.close()
+ // Prepare finished MKVs ahead of time so Watch plays immediately instead of
+ // waiting for a feature-length transcode to start on click.
+ a.engine.prewarm=a.prepareInBackground
  ctx,cancel:=context.WithCancel(context.Background());defer cancel()
  go a.engine.run(ctx)
  mux:=http.NewServeMux()

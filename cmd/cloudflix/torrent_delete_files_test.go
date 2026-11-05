@@ -54,9 +54,9 @@ func TestRemovingTorrentWithoutDeleteFilesKeepsPayload(t *testing.T){
  hash:=strings.Repeat("b",40)
  e,_,downloads:=deleteTestEngine(t,hash,[]string{"movie.mkv"})
  movie:=filepath.Join(downloads,"movie.mkv")
- // The historical default must not change: a plain remove keeps the file.
+ // The engine still supports keeping the bytes; only the HTTP default changed.
  if err:=e.action(hash,"remove",false);err!=nil{t.Fatal(err)}
- if !exists(movie){t.Fatal("plain remove must leave the downloaded file on disk")}
+ if !exists(movie){t.Fatal("engine remove with deleteFiles=false must keep the file")}
  if e.entries[hash]!=nil{t.Fatal("queue entry survived removal")}
 }
 
@@ -121,34 +121,30 @@ func TestDeletePlaybackCacheClearsTranscodes(t *testing.T){
 }
 
 // The HTTP layer is the contract the UI calls, so exercise it directly.
-func TestTorrentActionDeleteFilesIsOptIn(t *testing.T){
+func TestTorrentActionDeletesFilesByDefault(t *testing.T){
  hash:=strings.Repeat("3",40)
  e,_,downloads:=deleteTestEngine(t,hash,[]string{"movie.mkv"})
  movie:=filepath.Join(downloads,"movie.mkv")
  app:=&application{engine:e}
 
- post:=func(body string)int{
-  req:=httptest.NewRequest("POST","/api/torrents/"+hash+"/remove",strings.NewReader(body))
-  req.Header.Set("Content-Type","application/json")
-  req.SetPathValue("hash",hash)
-  req.SetPathValue("action","remove")
-  w:=httptest.NewRecorder()
-  app.torrentAction(w,req)
-  return w.Code
- }
-
- // A bodyless request keeps the historical behaviour.
- if code:=post("");code!=200{t.Fatalf("bodyless remove failed: %d",code)}
- if !exists(movie){t.Fatal("bodyless remove deleted the payload")}
+ // A bodyless remove now performs the full cleanup: entry and files together.
+ req:=httptest.NewRequest("POST","/api/torrents/"+hash+"/remove",nil)
+ req.Header.Set("Content-Type","application/json")
+ req.SetPathValue("hash",hash)
+ req.SetPathValue("action","remove")
+ w:=httptest.NewRecorder()
+ app.torrentAction(w,req)
+ if w.Code!=http.StatusOK{t.Fatalf("bodyless remove failed: %d %s",w.Code,w.Body.String())}
+ if exists(movie){t.Fatal("a bodyless remove left the movie on disk")}
 }
 
-func TestTorrentActionDeleteFilesRemovesPayloadOverHTTP(t *testing.T){
+func TestTorrentActionKeepFilesIsExplicitlyAvailable(t *testing.T){
  hash:=strings.Repeat("4",40)
  e,_,downloads:=deleteTestEngine(t,hash,[]string{"movie.mkv"})
  movie:=filepath.Join(downloads,"movie.mkv")
  app:=&application{engine:e}
 
- body,_:=json.Marshal(map[string]bool{"deleteFiles":true})
+ body,_:=json.Marshal(map[string]bool{"keepFiles":true})
  req:=httptest.NewRequest("POST","/api/torrents/"+hash+"/remove",strings.NewReader(string(body)))
  req.Header.Set("Content-Type","application/json")
  req.SetPathValue("hash",hash)
@@ -156,5 +152,5 @@ func TestTorrentActionDeleteFilesRemovesPayloadOverHTTP(t *testing.T){
  w:=httptest.NewRecorder()
  app.torrentAction(w,req)
  if w.Code!=http.StatusOK{t.Fatalf("expected 200, got %d: %s",w.Code,w.Body.String())}
- if exists(movie){t.Fatal("deleteFiles:true over HTTP left the movie on disk")}
+ if !exists(movie){t.Fatal("keepFiles:true over HTTP deleted the movie")}
 }

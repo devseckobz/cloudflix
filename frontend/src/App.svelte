@@ -1040,14 +1040,14 @@
       {#if queueItems.length}
        <div class="download-list queue-list">
         {#each queueItems as m (m.hash)}
-         <article class="download-item queue-item" class:download-rejected={m.status==='rejected'}>
+         <article class="download-item queue-item" class:download-rejected={m.status==='rejected'} class:download-completed={m.status==='completed'}>
           <div class="download-art queue-art">
            {#if m.poster}<img src={poster(m.poster)} alt="" loading="lazy"/>{:else}<Film size={24}/>{/if}
           </div>
           <div class="download-info queue-info">
            <div class="download-top queue-item-heading">
             <h3 title={m.title}>{m.title}</h3>
-            <span class="status-pill" class:complete={m.status==='completed'} class:rejected={m.status==='rejected'}>{statusLabel(m.status)}</span>
+            {#if m.status!=='completed'}<span class="status-pill" class:complete={m.status==='completed'} class:rejected={m.status==='rejected'}>{statusLabel(m.status)}</span>{/if}
            </div>
            {#if m.status==='rejected'}
             <p class="torrent-rejection"><AlertCircle size={13}/> {m.error||'Only MP4/MKV movies and SRT subtitles are supported.'}</p>
@@ -1090,7 +1090,7 @@
            {#if m.status==='completed'}
             <Button variant="outline" size="sm" class="queue-watch-button" onclick={()=>openMovie(m)}><MonitorPlay size={15}/><span>Watch</span></Button>
            {/if}
-           <Button variant="ghost" size="sm" class="queue-files-button" onclick={()=>showFiles(m)} aria-label={'View files for '+m.title}><Files size={15}/><span>Files</span></Button>
+           <Button variant="outline" size="sm" class="queue-files-button" onclick={()=>showFiles(m)} aria-label={'View files for '+m.title}><Files size={15}/><span>Files</span></Button>
            <Tooltip.Root>
             <Tooltip.Trigger>
              {#snippet child({ props })}

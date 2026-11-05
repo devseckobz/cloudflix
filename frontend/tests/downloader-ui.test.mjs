@@ -40,6 +40,13 @@ test('the connection indicator is not duplicated on the Downloader page',()=>{
  assert.doesNotMatch(css,/\.downloader-online/)
 })
 
+test('a completed download is tinted green instead of carrying a badge',()=>{
+ // The card states completion itself, so the redundant "Completed" pill is gone.
+ assert.match(downloader,/class:download-completed=\{m\.status==='completed'\}/)
+ assert.match(css,/\.queue-item\.download-completed\s*\{[\s\S]*?var\(--success\)/)
+ assert.match(downloader,/\{#if m\.status!=='completed'\}<span class="status-pill"/)
+})
+
 test('Completed downloads show a watch action, not an oversized progress bar',()=>{
  assert.match(downloader,/\{#if m\.status==='completed'\}/)
  assert.match(downloader,/class="queue-watch-button"/)
@@ -51,7 +58,9 @@ test('Completed downloads show a watch action, not an oversized progress bar',()
 test('Downloader queue actions are shadcn buttons and tokenised icon buttons',()=>{
  // Watch and Files use the shadcn Button; pause/copy/remove are token-driven icon buttons.
  assert.match(downloader,/<Button variant="outline" size="sm" class="queue-watch-button"/)
- assert.match(downloader,/<Button variant="ghost" size="sm" class="queue-files-button"/)
+ // Files is outline too: a ghost button next to an outline one looked broken.
+ assert.match(downloader,/<Button variant="outline" size="sm" class="queue-files-button"/)
+ assert.doesNotMatch(downloader,/<Button variant="ghost" size="sm" class="queue-files-button"/)
  assert.match(downloader,/class="queue-copy-button queue-icon-button"/)
  assert.match(downloader,/class="danger queue-icon-button"/)
  assert.match(css,/\.queue-icon-button\s*\{[\s\S]*?border:\s*1px solid var\(--border\)/)

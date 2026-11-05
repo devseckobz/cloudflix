@@ -938,6 +938,15 @@
   border-color: color-mix(in oklch, var(--destructive) 38%, var(--border));
   background: color-mix(in oklch, var(--destructive) 5%, var(--card));
 }
+/* A finished download is stated by the card itself, so the row no longer
+   carries a "Completed" badge repeating what the tint already says. */
+.queue-item.download-completed {
+  border-color: color-mix(in oklch, var(--success) 32%, var(--border));
+  background: color-mix(in oklch, var(--success) 6%, var(--card));
+}
+.queue-item.download-completed:hover {
+  border-color: color-mix(in oklch, var(--success) 48%, var(--border));
+}
 .queue-art {
   flex: 0 0 52px;
   width: 52px;

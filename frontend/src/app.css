@@ -799,7 +799,10 @@
   text-transform: uppercase;
   color: var(--muted-foreground);
 }
-.magnet-entry-row { display: flex; align-items: stretch; gap: 11px; }
+/* The textarea is user-resizable, and `align-items: stretch` made the button
+   grow with it, so dragging the field turned "Add download" into a tall slab.
+   Align to the top and pin the button's own height instead. */
+.magnet-entry-row { display: flex; align-items: flex-start; gap: 11px; }
 .magnet-entry-row textarea {
   flex: 1;
   min-width: 0;
@@ -812,7 +815,14 @@
   font-size: 11.5px;
   line-height: 1.5;
 }
-.magnet-add-button { align-self: stretch; min-width: 138px; height: auto; }
+.magnet-add-button {
+  flex: 0 0 auto;
+  /* A fixed 42px matches the textarea's min-height, so the row reads as one
+     control and the button cannot grow when the textarea is resized. */
+  height: 42px;
+  align-self: flex-start;
+  min-width: 138px;
+}
 .magnet-disclaimer {
   display: flex;
   align-items: flex-start;
@@ -833,6 +843,21 @@
   gap: 16px;
   flex-wrap: wrap;
   margin-bottom: 14px;
+}
+/* Sits beside the filter toggles, so it must not be stretched by the flex row. */
+.cleanup-button {
+  flex: 0 0 auto;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in oklch, var(--destructive) 84%, var(--foreground));
+}
+.cleanup-button:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--destructive) 42%, var(--border));
+  background: color-mix(in oklch, var(--destructive) 10%, transparent);
 }
 .download-queue-heading { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .download-queue-heading h2 {
@@ -2048,7 +2073,8 @@
   .magnet-form { padding: 15px; }
   .magnet-panel-heading { flex-direction: column; gap: 9px; }
   .magnet-entry-row { flex-direction: column; gap: 9px; }
-  .magnet-add-button { min-width: 0; min-height: 42px; }
+  /* Full width on a phone, but never stretched by a resized textarea. */
+  .magnet-add-button { min-width: 0; width: 100%; height: 42px; align-self: stretch; }
   .download-queue-toolbar { align-items: stretch; gap: 12px; }
   .download-queue-filters { width: 100%; }
   .download-queue-filters button { flex: 1; }

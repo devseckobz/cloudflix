@@ -86,10 +86,20 @@
  let sessionsError = $state('')
  let sessionsLoaded = $state(false)
  let revokingSession = $state('')
+ // Downloader → "Clean up": downloaded files on disk that no queued torrent
+ // claims. Scanning is read-only; deleting always asks first.
+ type Leftover = {path:string,size:number}
+ let leftovers = $state<Leftover[]>([])
+ let leftoverBytes = $state(0)
+ let leftoverCount = $state(0)
+ let leftoverTruncated = $state(false)
+ let cleanupBusy = $state(false)
+ let leftoversChecked = $state(false)
  // Ignore the initial server version; reload only when the running binary changes.
  const versionMonitor=createVersionReloadMonitor(()=>window.location.reload())
  const navigate=(destination:'home'|'downloader'|'settings')=>{
    if(destination==='settings'||destination==='downloader')void loadSettings()
+   if(destination==='downloader')void scanLeftovers()
    if(destination==='settings')void loadSessions()
    page=destination
    const path=destination==='home'?'/':destination==='settings'?'/settings':'/downloader'
@@ -403,6 +413,38 @@
      settingsLoading=false
      if(page==='settings')void loadUpdateInfo(true)
    }
+ }
+ // Ask the server which files on disk no queued torrent claims. Read-only, so
+ // it is safe to run whenever the Downloader page opens.
+ const scanLeftovers=async()=>{
+   try{
+     const result=await call('storage/leftovers')
+     leftovers=Array.isArray(result?.files)?(result.files as Leftover[]):[]
+     leftoverCount=Number(result?.count)||0
+     leftoverBytes=Number(result?.bytes)||0
+     leftoverTruncated=Boolean(result?.truncated)
+     leftoversChecked=true
+   }catch{/* A queue still loading metadata refuses the scan; the button simply stays hidden. */}
+ }
+ const cleanUp=async()=>{
+   if(cleanupBusy||!leftoverCount)return
+   const total=formatBytes(leftoverBytes)
+   const ok=await confirmDialog({
+     title:'Delete '+leftoverCount+' unused '+(leftoverCount===1?'file':'files')+'?',
+     description:'These files are in the downloads folder but no longer belong to any download in your queue. Deleting them frees '+total+' and cannot be undone.',
+     confirmLabel:'Delete '+total,
+     destructive:true,
+   })
+   if(ok!==true)return
+   cleanupBusy=true
+   try{
+     const result=await call('storage/cleanup','POST',{})
+     const deleted=Number(result?.deleted)||0
+     notify('Deleted '+deleted+' '+(deleted===1?'file':'files')+', freeing '+formatBytes(Number(result?.bytes)||0)+'.')
+     await refresh()
+     await scanLeftovers()
+   }catch(e){fail((e as Error).message)}
+   finally{cleanupBusy=false}
  }
  const saveTMDB=async()=>{
    if(!tmdbToken.trim()){fail('Paste a TMDB API key or Read Access Token first');return}
@@ -986,6 +1028,14 @@
         <Toggle class="queue-filter-toggle" pressed={queueFilter==='active'} onPressedChange={(pressed)=>{if(pressed)queueFilter='active'}} aria-label="Show in-progress downloads">In progress</Toggle>
         <Toggle class="queue-filter-toggle" pressed={queueFilter==='completed'} onPressedChange={(pressed)=>{if(pressed)queueFilter='completed'}} aria-label="Show completed downloads">Completed</Toggle>
        </div>
+       {#if leftoversChecked && leftoverCount>0}
+        <Button variant="outline" size="sm" class="cleanup-button" onclick={()=>void cleanUp()} disabled={cleanupBusy}
+          title={leftoverCount+' '+(leftoverCount===1?'file':'files')+' in the downloads folder no longer belong to any download in your queue.'}
+          aria-label={'Clean up '+leftoverCount+' unused '+(leftoverCount===1?'file':'files')+', freeing '+formatBytes(leftoverBytes)}>
+         {#if cleanupBusy}<Spinner class="size-4"/>{:else}<Trash2 size={15}/>{/if}
+         Clean up {formatBytes(leftoverBytes)}
+        </Button>
+       {/if}
       </div>
       {#if queueItems.length}
        <div class="download-list queue-list">

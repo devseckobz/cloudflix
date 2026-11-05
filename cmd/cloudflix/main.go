@@ -116,6 +116,8 @@ func main() {
  mux.HandleFunc("GET /api/playback/{hash}/subtitle",a.require(func(w http.ResponseWriter,r *http.Request){a.serveMKVCache(w,r,true)}))
  mux.HandleFunc("GET /api/torrents/{hash}/files",a.require(a.torrentFiles))
  mux.HandleFunc("GET /api/torrents/{hash}/magnet",a.require(a.torrentMagnet))
+ mux.HandleFunc("GET /api/storage/leftovers",a.require(a.storageLeftovers))
+ mux.HandleFunc("POST /api/storage/cleanup",a.require(a.cleanupLeftovers))
  mux.Handle("/",static.Handler())
  addr:=env("CLOUDFLIX_LISTEN","0.0.0.0:80")
  server:=&http.Server{Addr:addr,Handler:securityHeaders(mux),ReadHeaderTimeout:5*time.Second,IdleTimeout:60*time.Second,ReadTimeout:20*time.Second,MaxHeaderBytes:1<<20}

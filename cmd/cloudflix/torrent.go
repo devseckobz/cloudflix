@@ -38,6 +38,18 @@ type entry struct {
  retryAt time.Time
  validated bool
  rejectionReason string
+ // Proof-of-completion cache. selectedFilesVerified walks every piece of every
+ // selected file, which is far too expensive to repeat on the 2s SSE tick for
+ // a large library. A positive result is remembered while the torrent still
+ // reports every selected byte as downloaded; a negative one is retried no
+ // more than once a second.
+ verified bool
+ verifiedAt time.Time
+ // Per-file proof cache for the media and MKV handlers. A player issues dozens
+ // of range requests per minute, and each used to re-walk every piece of the
+ // requested file (~0.5 MB of allocations for a 20k-piece movie). A verified
+ // file stays verified.
+ verifiedFiles map[string]bool
  fileManifest *torrentFileManifest // transient torrent metadata; never stored in SQLite
  inspectingFiles bool
  inspectedFilesOnce bool
@@ -140,6 +152,60 @@ func selectedFilesVerified(tt *torrent.Torrent)bool{
   if isMovieVideo(file.Path()){foundVideo=true}
  }
  return foundVideo
+}
+
+// How long a failed completion proof is trusted before the O(pieces) walk is
+// attempted again. A torrent that is genuinely complete but still hashing must
+// not pay the walk on every 2s snapshot tick.
+const verifiedRecheckInterval=time.Second
+
+// completedLocked proves that every selected media file is fully hash-verified,
+// memoizing the expensive piece walk. size and completed come from the caller's
+// already-computed selectedFileStats pass, so a finished movie costs O(1) per
+// snapshot instead of O(pieces), which is what used to stall the engine mutex
+// (and every concurrent media range request behind it).
+//
+// Caller holds e.mu. Once a torrent is proven complete it stays complete: this
+// application never shrinks or re-fetches a finished download, and the entry
+// (and this cache with it) is dropped when the torrent is removed.
+func (e *engine) completedLocked(item *entry,tt *torrent.Torrent,size,completed int64)bool{
+ if tt==nil || tt.Info()==nil || size<=0 || completed<size{
+  item.verified=false
+  return false
+ }
+ if item.verified{return true}
+ if time.Since(item.verifiedAt)<verifiedRecheckInterval{return false}
+ item.verifiedAt=time.Now()
+ // Reuse the per-file proof cache so a completed movie is walked at most once
+ // per process, not once per snapshot tick.
+ foundVideo:=false
+ for _,file:=range tt.Files(){
+  path:=filepath.ToSlash(file.Path())
+  if !allowedMediaPath(path) || file.Length()<=0{continue}
+  if !e.fileVerifiedLocked(item,tt,path){return false}
+  if isMovieVideo(path){foundVideo=true}
+ }
+ if !foundVideo{return false}
+ item.verified=true
+ return true
+}
+
+// fileVerifiedLocked reports whether a single selected media file is fully
+// hash-verified, memoizing the per-file piece walk. Every authenticated range
+// request for a movie used to repeat that walk while holding e.mu.
+//
+// Caller holds e.mu.
+func (e *engine) fileVerifiedLocked(item *entry,tt *torrent.Torrent,path string)bool{
+ if item==nil || item.rejectionReason!="" || tt==nil || tt.Info()==nil{return false}
+ if item.verifiedFiles!=nil && item.verifiedFiles[path]{return true}
+ for _,file:=range tt.Files(){
+  if filepath.ToSlash(file.Path())!=path || !allowedMediaPath(path) || file.Length()<=0{continue}
+  if !verifiedFile(file){return false}
+  if item.verifiedFiles==nil{item.verifiedFiles=make(map[string]bool,2)}
+  item.verifiedFiles[path]=true
+  return true
+ }
+ return false
 }
 
 func selectedFileStats(tt *torrent.Torrent)(size,completed int64,files []map[string]any){
@@ -486,7 +552,7 @@ func (e *engine) snapshot()[]map[string]any{
    if tt.Info()!=nil{
     size,completed,files=selectedFileStats(tt)
    }
-   if item.validated && size>0 && completed>=size && selectedFilesVerified(tt) {
+   if item.validated && e.completedLocked(item,tt,size,completed) {
     status="completed"
    }else if item.paused{
     status="paused"

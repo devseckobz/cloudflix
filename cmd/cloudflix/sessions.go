@@ -130,7 +130,7 @@ func (e *engine) movieState(hash string)(string,bool,bool){
  if title==""{title=tt.Name()}
  if !item.validated{return title,false,true}
  size,completed,_:=selectedFileStats(tt)
- if size<=0 || completed<size || !selectedFilesVerified(tt){return title,false,true}
+ if !e.completedLocked(item,tt,size,completed){return title,false,true}
  return title,true,true
 }
 

@@ -36,7 +36,24 @@ type application struct {
  dataDir string
  authMu sync.Mutex
  attempts map[string][]time.Time
+ liveMu sync.Mutex
+ live *liveState
  movieInfo func(hash string)(title string,completed,known bool) // test seam for the movie catalog
+}
+
+// liveState fans one snapshot per tick out to every connected browser. Building
+// a snapshot walks every torrent and every selected file's piece states under
+// engine.mu, so computing it per client made N open tabs cost N walks and N
+// JSON encodes every two seconds, all of it contending with the media range
+// requests that must answer inside a 16.7ms frame budget. One goroutine now
+// builds the payload once and every subscriber receives the same bytes; a
+// stalled client skips ticks instead of blocking the broadcaster or its peers.
+type liveState struct{
+ mu sync.Mutex
+ subscribers map[chan []byte]struct{}
+ last []byte
+ running bool
+ wake chan struct{} // poked when the last subscriber leaves, so exit is immediate
 }
 
 func main() {
@@ -234,16 +251,91 @@ func (a *application) logout(w http.ResponseWriter,r *http.Request){
  respond(w,200,map[string]bool{"ok":true})
 }
 func (a *application) state(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]any{"movies":a.engine.snapshot(),"storage":a.engine.storage(),"version":version})}
+func (a *application) liveState()*liveState{
+ a.liveMu.Lock()
+ defer a.liveMu.Unlock()
+ if a.live==nil{a.live=&liveState{subscribers:map[chan []byte]struct{}{},wake:make(chan struct{},1)}}
+ return a.live
+}
+func (a *application) livePayload()[]byte{
+ payload,_:=json.Marshal(map[string]any{"movies":a.engine.snapshot(),"storage":a.engine.storage(),"version":version})
+ return payload
+}
+// liveSubscribe registers one SSE client and starts the shared broadcaster on
+// demand. The returned channel is buffered with the latest frame, so a client
+// that falls behind simply misses a tick instead of stalling anyone else.
+func (a *application) liveSubscribe()(<-chan []byte,func()){
+ live:=a.liveState()
+ updates:=make(chan []byte,1)
+ live.mu.Lock()
+ live.subscribers[updates]=struct{}{}
+ if !live.running{
+  live.running=true
+  go a.liveBroadcast(live)
+ }
+ last:=live.last
+ live.mu.Unlock()
+ if last!=nil{select{case updates<-last:default:}}
+ return updates,func(){
+  live.mu.Lock()
+  delete(live.subscribers,updates)
+  idle:=len(live.subscribers)==0
+  live.mu.Unlock()
+  if idle{select{case live.wake<-struct{}{}:default:}}
+ }
+}
+// liveBroadcast computes the snapshot once per tick and fans the identical
+// bytes out to every subscriber. It exits when the last client disconnects, so
+// an idle server pays nothing and no goroutine is left behind.
+func (a *application) liveBroadcast(live *liveState){
+ ticker:=time.NewTicker(2*time.Second)
+ defer ticker.Stop()
+ for{
+  live.mu.Lock()
+  if len(live.subscribers)==0{
+   live.running=false
+   live.last=nil
+   live.mu.Unlock()
+   return
+  }
+  live.mu.Unlock()
+  payload:=a.livePayload()
+  live.mu.Lock()
+  if len(live.subscribers)==0{
+   live.running=false
+   live.last=nil
+   live.mu.Unlock()
+   return
+  }
+  live.last=payload
+  for updates:=range live.subscribers{
+   // Replace any frame the client has not read yet: a slow client must see the
+   // newest state, never a backlog, and must never block this loop.
+   select{case <-updates:default:}
+   select{case updates<-payload:default:}
+  }
+  live.mu.Unlock()
+  select{
+  case <-ticker.C:
+  case <-live.wake:
+   // A client left. Loop back so the subscriber set is re-checked: if someone
+   // else connected in the meantime the broadcaster must keep running.
+  }
+ }
+}
 func (a *application) events(w http.ResponseWriter,r *http.Request){
  w.Header().Set("Content-Type","text/event-stream")
  w.Header().Set("Cache-Control","no-store")
  w.Header().Set("X-Accel-Buffering","no")
  flusher,ok:=w.(http.Flusher);if !ok{fail(w,500,"stream unavailable");return}
- ticker:=time.NewTicker(2*time.Second);defer ticker.Stop()
- for {
-  state,_:=json.Marshal(map[string]any{"movies":a.engine.snapshot(),"storage":a.engine.storage(),"version":version})
-  if _,err:=fmt.Fprintf(w,"data: %s\n\n",state);err!=nil{return}
-  flusher.Flush()
-  select{case <-r.Context().Done():return;case <-ticker.C:}
+ updates,unsubscribe:=a.liveSubscribe()
+ defer unsubscribe()
+ for{
+  select{
+  case <-r.Context().Done():return
+  case payload:=<-updates:
+   if _,err:=fmt.Fprintf(w,"data: %s\n\n",payload);err!=nil{return}
+   flusher.Flush()
+  }
  }
 }

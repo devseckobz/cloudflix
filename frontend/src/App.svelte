@@ -11,6 +11,15 @@
  import * as Tooltip from '$lib/components/ui/tooltip/index.js'
  import * as Empty from '$lib/components/ui/empty/index.js'
  import * as Dialog from '$lib/components/ui/dialog/index.js'
+ import * as Alert from '$lib/components/ui/alert/index.js'
+ import * as InputOTP from '$lib/components/ui/input-otp/index.js'
+ import * as Pagination from '$lib/components/ui/pagination/index.js'
+ import * as ScrollArea from '$lib/components/ui/scroll-area/index.js'
+ import * as Avatar from '$lib/components/ui/avatar/index.js'
+ import { Skeleton } from '$lib/components/ui/skeleton/index.js'
+ import { Toggle } from '$lib/components/ui/toggle/index.js'
+ import { confirmDialog } from '$lib/components/ui/alert-dialog/index.js'
+ import { Toaster, toast } from '$lib/components/ui/sonner/index.js'
  import { selectLibraryPage, countDownloading } from './lib/library.js'
  import {findPlayback,mediaURL} from './lib/media.js'
  import {createVersionReloadMonitor} from './lib/version-reload.js'
@@ -33,8 +42,9 @@
  let storage = $state<Storage|null>(null)
  const storageUsed = $derived(storage?.known&&storage.total>0?Math.min(100,100*(storage.total-storage.free)/storage.total):0)
  let error = $state('')
- let notice = $state('')
  let magnet = $state('')
+ let magnetDialog = $state<{title:string,magnet:string}|null>(null)
+ let stateLoaded = $state(false)
  let submitting = $state(false)
  let search = $state('')
  let libraryPage = $state(1)
@@ -51,7 +61,6 @@
  let mkvPollActive=false
  let ccEnabled = $state(false)
  let selectedSubtitle = $state(0)
- let noticeTimer:ReturnType<typeof setTimeout>|undefined
  let connected = $state(false)
  let version = $state('v0.1.0-alpha')
  let live:EventSource|null = null
@@ -152,11 +161,9 @@
    }
    return result
  }
- const notify=(message:string)=>{
-   if(noticeTimer!==undefined)clearTimeout(noticeTimer)
-   notice=message
-   noticeTimer=setTimeout(()=>{notice='';noticeTimer=undefined},4200)
- }
+ // Sonner owns the toast lifecycle (auto-dismiss, stacking, a11y live region).
+ const notify=(message:string)=>toast.success(message)
+ const fail=(message:string)=>toast.error(message)
  const syncSubtitleTracks=()=>{
    applySubtitleSelection(playerVideo,ccEnabled?selectedSubtitle:-1)
  }
@@ -376,7 +383,12 @@
  }
  const startUpdate=async()=>{
    if(!updateInfo?.updateAvailable||!updateInfo.updaterReady||updateBusy)return
-   if(!confirm('Install Cloudflix '+updateInfo.latestVersion+' now? Your server will restart briefly and your movies will be preserved.'))return
+   const ok=await confirmDialog({
+     title:'Install Cloudflix '+updateInfo.latestVersion+'?',
+     description:'Your server will restart briefly. Your movies, PIN and settings are preserved.',
+     confirmLabel:'Install update',
+   })
+   if(!ok)return
    updateBusy=true
    updateError=''
    try{
@@ -392,42 +404,56 @@
      const result=await call('settings')
      tmdbConfigured=Boolean(result.tmdbConfigured)
      tmdbChecked=true
-   }catch(e){error=(e as Error).message}
+   }catch(e){fail((e as Error).message)}
    finally{
      settingsLoading=false
      if(page==='settings')void loadUpdateInfo(true)
    }
  }
  const saveTMDB=async()=>{
-   if(!tmdbToken.trim()){error='Paste a TMDB API key or Read Access Token first';return}
-   settingsBusy=true;error='';notice=''
+   if(!tmdbToken.trim()){fail('Paste a TMDB API key or Read Access Token first');return}
+   settingsBusy=true
    try{
      const result=await call('settings','PUT',{tmdbApiKey:tmdbToken.trim()})
      tmdbConfigured=Boolean(result.tmdbConfigured)
      tmdbToken=''
      notify('TMDB API token verified and saved. Movie artwork will refresh automatically.')
-   }catch(e){error=(e as Error).message}
+   }catch(e){fail((e as Error).message)}
    finally{settingsBusy=false}
  }
  const clearTMDB=async()=>{
-   if(!confirm('Remove the TMDB API token? Existing artwork will remain, but new movie metadata will not be fetched.'))return
-   settingsBusy=true;error='';notice=''
+   const ok=await confirmDialog({
+     title:'Remove the TMDB API token?',
+     description:'Existing artwork will remain, but new movie metadata will not be fetched.',
+     confirmLabel:'Remove token',
+     destructive:true,
+   })
+   if(!ok)return
+   settingsBusy=true
    try{
      await call('settings','PUT',{tmdbApiKey:''})
      tmdbConfigured=false
      tmdbToken=''
      notify('TMDB API token removed.')
-   }catch(e){error=(e as Error).message}
+   }catch(e){fail((e as Error).message)}
    finally{settingsBusy=false}
  }
+ // The SSE snapshot arrives every 2s as freshly parsed JSON. Replacing the
+ // array unconditionally would invalidate every {#each} block and repaint the
+ // whole library while a movie is playing, so compare a cheap signature first.
+ const movieSignature=(list:Movie[])=>list.map(m=>m.hash+'|'+m.status+'|'+m.progress+'|'+m.completed+'|'+m.title+'|'+m.year+'|'+m.genre+'|'+m.rating+'|'+m.size+'|'+(m.error||'')).join('\n')
  const setState=(state:{movies:Movie[],version?:string,storage?:Storage})=>{
    // SSE also covers terminal-based updates and all pages, not just Settings.
    if(state.version && versionMonitor.observe(state.version))return
-   movies=state.movies||[]
-   storage=state.storage||null
+   const nextMovies=state.movies||[]
+   if(movieSignature(nextMovies)!==movieSignature(movies))movies=nextMovies
+   const nextStorage=state.storage||null
+   if(JSON.stringify(nextStorage)!==JSON.stringify(storage))storage=nextStorage
    if(state.version)version=state.version
+   stateLoaded=true
    if(selected){
-     selected=movies.find(m=>m.hash===selected?.hash)||null
+     const current=movies.find(m=>m.hash===selected?.hash)||null
+     if(current!==selected)selected=current
      // A movie removed mid-playback unmounts the theater; stop tracking it.
      if(!selected)stopWatchingTimer()
    }
@@ -439,7 +465,8 @@
    live.onmessage=(event)=>{try{setState(JSON.parse(event.data))}catch{}}
    live.onerror=()=>connected=false
  }
- const refresh=async()=>{try{setState(await call('state'))}catch(e){error=String(e)}}
+ // A failed first load must not leave the skeleton shimmering forever.
+ const refresh=async()=>{try{setState(await call('state'))}catch(e){fail(String(e))}finally{stateLoaded=true}}
  const checkAuth=async()=>{
    try{
      const state=await call('auth/status')
@@ -474,7 +501,7 @@
    const sessionsPoll=setInterval(()=>{
      if(page==='settings'&&auth==='ready')void loadSessions(true)
    },10000)
-   return ()=>{live?.close();stopWatchingTimer();clearInterval(updaterPoll);clearInterval(fileInspectionPoll);clearInterval(mkvPlaybackPoll);clearInterval(sessionsPoll);if(noticeTimer!==undefined)clearTimeout(noticeTimer);window.removeEventListener('popstate',handleBack);window.removeEventListener('keydown',handleEscape)}
+   return ()=>{live?.close();stopWatchingTimer();clearInterval(updaterPoll);clearInterval(fileInspectionPoll);clearInterval(mkvPlaybackPoll);clearInterval(sessionsPoll);window.removeEventListener('popstate',handleBack);window.removeEventListener('keydown',handleEscape)}
  })
  const authenticate=async()=>{
    error=''
@@ -506,17 +533,17 @@
      // Replace the deep-link history entry, then load the signed-out root.
      window.location.replace('/')
    }catch(e){
-     error=(e as Error).message
+     fail((e as Error).message)
    }
  }
  const add=async()=>{
-   error='';notice='';submitting=true
+   submitting=true
    try{
      const settings=await call('settings')
      tmdbConfigured=Boolean(settings.tmdbConfigured)
      tmdbChecked=true
      if(!tmdbConfigured){
-       error='Set your TMDB API key in Settings before downloading a movie.'
+       fail('Set your TMDB API key in Settings before downloading a movie.')
        return
      }
      await call('magnets','POST',{magnet:magnet.trim()})
@@ -524,8 +551,9 @@
      notify('Magnet queued. Checking its files for an MP4 or MKV movie before downloading.')
      await refresh()
    }catch(e){
-     error=(e as Error).message
-     if(error.includes('TMDB API key')){tmdbConfigured=false;tmdbChecked=true}
+     const message=(e as Error).message
+     fail(message)
+     if(message.includes('TMDB API key')){tmdbConfigured=false;tmdbChecked=true}
    }finally{submitting=false}
  }
  const copyTorrentMagnet=async(movie:Movie)=>{
@@ -535,26 +563,32 @@
        throw new Error('Magnet link unavailable for this download.')
      }
      if(!await copyToClipboard(result.magnet)){
-       // Plain-HTTP VPS pages can be denied clipboard permissions. The
-       // read-only prompt still lets the user select and copy the magnet.
-       window.prompt('Copy this magnet link:',result.magnet)
+       // Plain-HTTP VPS pages can be denied clipboard permissions. Fall back to
+       // a read-only dialog with a selectable field and a retry button.
+       magnetDialog={title:movie.title,magnet:result.magnet}
        return
      }
      notify('Magnet link copied')
    }catch(e){
-     error=(e as Error).message
+     fail((e as Error).message)
+   }
+ }
+ const copyMagnetAgain=async()=>{
+   if(!magnetDialog)return
+   if(await copyToClipboard(magnetDialog.magnet)){
+     magnetDialog=null
+     notify('Magnet link copied')
    }
  }
  const action=async(m:Movie,verb:'pause'|'resume'|'remove')=>{
    if(verb==='remove'){
-     const message=m.status==='rejected'
-       ?'Delete this rejected torrent? Its record and temporary file list will be removed.'
-       :'Remove this torrent from Cloudflix? Downloaded files are retained.'
-     if(!confirm(message))return
+     const ok=await confirmDialog(m.status==='rejected'
+       ?{title:'Delete this rejected torrent?',description:'Its record and temporary file list will be removed.',confirmLabel:'Delete',destructive:true}
+       :{title:'Remove this torrent?',description:'Downloaded files are retained on the server.',confirmLabel:'Remove',destructive:true})
+     if(!ok)return
    }
-   error='';notice=''
    try{await call('torrents/'+encodeURIComponent(m.hash)+'/'+verb,'POST',{});if(verb==='remove' && selected?.hash===m.hash)closeMovie();if(verb==='remove' && fileViewer?.hash===m.hash)closeFileViewer();await refresh()}
-   catch(e){error=(e as Error).message}
+   catch(e){fail((e as Error).message)}
  }
 </script>
 
@@ -563,6 +597,7 @@
 </svelte:head>
 
 <Tooltip.Provider>
+<Toaster position="bottom-right" closeButton richColors/>
 {#if auth==='loading'}
  <div class="auth-screen">
   <div class="auth-wordmark"><span class="auth-logo"><Film size={22}/></span><span>cloud<strong>flix</strong></span></div>
@@ -583,8 +618,28 @@
  <div class="auth-screen auth-minimal">
   <form class="auth-card auth-compact" novalidate onsubmit={(e)=>{e.preventDefault();void authenticate()}}>
    <div class="auth-wordmark"><span class="auth-logo"><Film size={21} strokeWidth={2.2}/></span><span>cloud<strong>flix</strong></span></div>
-   <input id="pin" class="pin-field" aria-label="Access PIN" type="password" inputmode="numeric" maxlength="6" autocomplete="off" bind:value={pin} oninput={(event)=>{const digits=event.currentTarget.value.replace(/[^0-9]/g,'').slice(0,6);event.currentTarget.value=digits;pin=digits;error=''}} placeholder="••••••" aria-invalid={Boolean(error)} />
-   {#if error}<div class="auth-error" role="alert"><AlertCircle size={15}/><span>{error}</span></div>{/if}
+   <InputOTP.Root
+    class="pin-otp{error?' pin-otp-invalid':''}"
+    maxlength="6"
+    numeric
+    autofocus
+    inputmode="numeric"
+    autocomplete="off"
+    aria-label="Access PIN"
+    aria-invalid={Boolean(error)}
+    bind:value={pin}
+    disabled={submitting}
+    onComplete={()=>{if(!submitting)void authenticate()}}
+   >
+    {#snippet children({ cells })}
+     <InputOTP.Group class="pin-otp-group">
+      {#each cells as cell, i (i)}
+       <InputOTP.Slot {cell} class="pin-otp-slot"/>
+      {/each}
+     </InputOTP.Group>
+    {/snippet}
+   </InputOTP.Root>
+   {#if error}<Alert.Root variant="destructive" class="auth-error"><AlertCircle size={15}/><Alert.Description>{error}</Alert.Description></Alert.Root>{/if}
    <Button class="auth-submit" type="submit" disabled={submitting||pin.length!==6}>
     {#if submitting}<Spinner class="size-4"/>Verifying…{:else}Continue<span aria-hidden="true">→</span>{/if}
    </Button>
@@ -592,7 +647,7 @@
   </form>
  </div>
 {:else}
- <div class="app-shell" data-page={page}>
+ <div class="app-shell{selected?' theater-open':''}" data-page={page}>
   <aside class="sidebar">
    <button class="brand brand-button" onclick={()=>navigate('home')} aria-label="Cloudflix homepage"><span class="brand-icon"><Film size={22}/></span><strong>cloud<span>flix</span></strong></button>
    <div class="side-label">Menu</div>
@@ -610,8 +665,8 @@
       <small>{formatBytes(storage.total)} total capacity</small>
      </div>
     {/if}
-    <div class="server-status"><span class:online={connected} class="status-dot"></span><span>{connected?'Server connected':'Reconnecting…'}</span></div>
-    <button onclick={signOut} class="signout"><LogOut size={17}/> Sign out</button>
+    <div class="server-status" role="status"><span class:online={connected} class="status-dot" aria-hidden="true"></span><span>{connected?'Server connected':'Reconnecting…'}</span></div>
+    <button type="button" onclick={signOut} class="signout"><LogOut size={17} aria-hidden="true"/> Sign out</button>
    </div>
   </aside>
   <main class="main">
@@ -619,24 +674,32 @@
     <div class="mobile-brand brand"><span class="brand-icon"><Film size={17}/></span><strong>cloud<span>flix</span></strong></div>
     {#if page==='home'}
      <label class="nav-movie-search">
-      <Search size={16}/>
+      <Search size={16} aria-hidden="true"/>
       <input value={search} oninput={(event)=>{search=event.currentTarget.value;libraryPage=1}} placeholder="Search movies" aria-label="Search downloaded movies"/>
       {#if search.trim()}
-       <button type="button" aria-label="Clear search" onclick={()=>{search='';libraryPage=1}}><X size={15}/></button>
+       <button type="button" aria-label="Clear search" onclick={()=>{search='';libraryPage=1}}><X size={15} aria-hidden="true"/></button>
       {/if}
      </label>
     {:else}
      <span class="nav-page-caption">{page==='settings'?'Settings':'Downloader'}</span>
-     <div class="topbar-status"><span class:online={connected} class="status-dot"></span><span>{connected?'Connected':'Reconnecting'}</span></div>
+     <div class="topbar-status" role="status"><span class:online={connected} class="status-dot" aria-hidden="true"></span><span>{connected?'Connected':'Reconnecting'}</span></div>
     {/if}
    </header>
-   {#if notice}<div class="toast success"><CheckCircle2 size={15}/>{notice}<button onclick={()=>notice=''} aria-label="Dismiss"><X size={15}/></button></div>{/if}
-   {#if error}<div class="toast error"><AlertCircle size={15}/>{error}<button onclick={()=>error=''} aria-label="Dismiss"><X size={15}/></button></div>{/if}
    {#if page==='home'}
     <section class="movie-library" aria-label="Downloaded movies">
      <!-- Screen-reader heading: the visible page is the poster grid only. -->
      <h1 class="sr-only">Your movie library</h1>
-     {#if libraryView.movies.length}
+     {#if !stateLoaded}
+      <div class="movie-library-grid" aria-hidden="true">
+       {#each Array(10) as _, i (i)}
+        <div class="movie-library-skeleton">
+         <Skeleton class="movie-library-skeleton-poster"/>
+         <Skeleton class="movie-library-skeleton-line"/>
+         <Skeleton class="movie-library-skeleton-meta"/>
+        </div>
+       {/each}
+      </div>
+     {:else if libraryView.movies.length}
       <div class="movie-library-grid">
        {#each libraryView.movies as movie (movie.hash)}
         <button type="button" class="movie-library-card" title={'Play '+movie.title} onclick={()=>openMovie(movie)}>
@@ -657,13 +720,32 @@
        {/each}
       </div>
       <div class="library-pagination-footer">
-       <nav class="library-bottom-pagination" aria-label="Movie pages">
-        <button type="button" aria-label="Previous page" disabled={libraryView.page===1} onclick={()=>libraryPage=libraryView.page-1}><ChevronLeft size={15}/></button>
-        {#each libraryView.pages as number}
-         <button type="button" class:active={libraryView.page===number} aria-label={'Page '+number} aria-current={libraryView.page===number?'page':undefined} onclick={()=>libraryPage=number}>{number}</button>
-        {/each}
-        <button type="button" aria-label="Next page" disabled={libraryView.page===libraryView.totalPages} onclick={()=>libraryPage=libraryView.page+1}><ChevronRight size={15}/></button>
-       </nav>
+       <Pagination.Root
+        class="library-bottom-pagination"
+        aria-label="Movie pages"
+        count={libraryView.total}
+        perPage={10}
+        page={libraryView.page}
+        onPageChange={(next)=>libraryPage=next}
+       >
+        <Pagination.Content>
+         <Pagination.Item>
+          <Pagination.PrevButton class="library-page-arrow" aria-label="Previous page" onclick={()=>libraryPage=libraryView.page-1}>
+           {#snippet children()}<ChevronLeft size={15}/>{/snippet}
+          </Pagination.PrevButton>
+         </Pagination.Item>
+         {#each libraryView.pages as number (number)}
+          <Pagination.Item>
+           <button type="button" class:active={libraryView.page===number} aria-label={'Page '+number} aria-current={libraryView.page===number?'page':undefined} onclick={()=>libraryPage=number}>{number}</button>
+          </Pagination.Item>
+         {/each}
+         <Pagination.Item>
+          <Pagination.NextButton class="library-page-arrow" aria-label="Next page" onclick={()=>libraryPage=libraryView.page+1}>
+           {#snippet children()}<ChevronRight size={15}/>{/snippet}
+          </Pagination.NextButton>
+         </Pagination.Item>
+        </Pagination.Content>
+       </Pagination.Root>
        <p class="library-results-count">Showing {libraryView.from}–{libraryView.to} of {libraryView.total}</p>
       </div>
      {:else}
@@ -697,7 +779,7 @@
         <h2>TMDB Movie Metadata</h2>
         <p>Automatically find movie titles, posters, backdrop artwork, genres and release years.</p>
        </div>
-       <span class:configured={tmdbConfigured} class="integration-status">{settingsLoading?'Checking…':tmdbConfigured?'● Connected':'○ Not configured'}</span>
+       <Badge variant={tmdbConfigured?'secondary':'outline'} class="integration-status{tmdbConfigured?' configured':''}">{settingsLoading?'Checking…':tmdbConfigured?'● Connected':'○ Not configured'}</Badge>
       </div>
       <form class="settings-form" onsubmit={(event)=>{event.preventDefault();saveTMDB()}}>
        <Label for="tmdb-token">TMDB API key or Read Access Token</Label>
@@ -718,9 +800,9 @@
         <p>Keep Cloudflix current with verified binaries from GitHub Releases. Your downloads and PIN stay intact.</p>
        </div>
        {#if updateInfo?.updateAvailable}
-        <span class="integration-status update-available">● Update available</span>
+        <Badge variant="outline" class="integration-status update-available">● Update available</Badge>
        {:else if updateInfo && !updateInfo.checkError}
-        <span class="integration-status configured">● Up to date</span>
+        <Badge variant="secondary" class="integration-status configured">● Up to date</Badge>
        {/if}
       </div>
       <div class="update-versions">
@@ -728,18 +810,18 @@
        <div><span>Latest release</span><strong>{updateChecking?'Checking…':updateInfo?.latestVersion||'—'}</strong></div>
       </div>
       {#if updateInfo?.state==='running'||updateInfo?.state==='queued'}
-       <div class="update-progress" role="status"><Spinner class="size-4"/><div><strong>Updating Cloudflix</strong><p>{updateInfo?.message||'Installing the latest release…'} This page will reconnect when the service restarts.</p></div></div>
+       <Alert.Root class="update-progress"><Spinner class="size-4"/><Alert.Title>Updating Cloudflix</Alert.Title><Alert.Description>{updateInfo?.message||'Installing the latest release…'} This page will reconnect when the service restarts.</Alert.Description></Alert.Root>
       {:else if updateInfo?.state==='success'&&!updateInfo?.updateAvailable}
-       <p class="update-status-good"><CheckCircle2 size={15}/> Your update finished successfully.</p>
+       <Alert.Root class="update-status-good"><CheckCircle2 size={15}/><Alert.Description>Your update finished successfully.</Alert.Description></Alert.Root>
       {:else if updateInfo?.state==='error'}
-       <p class="update-status-error"><AlertCircle size={15}/>{updateInfo.message}</p>
+       <Alert.Root variant="destructive" class="update-status-error"><AlertCircle size={15}/><Alert.Description>{updateInfo.message}</Alert.Description></Alert.Root>
       {/if}
       {#if updateInfo?.checkError}
        <p class="settings-hint">{updateInfo.checkError}</p>
       {/if}
-      {#if updateError}<p class="update-status-error" role="alert"><AlertCircle size={15}/>{updateError}</p>{/if}
+      {#if updateError}<Alert.Root variant="destructive" class="update-status-error"><AlertCircle size={15}/><Alert.Description>{updateError}</Alert.Description></Alert.Root>{/if}
       {#if updateInfo&&!updateInfo.updaterReady}
-       <p class="settings-warning"><AlertCircle size={15}/> The web updater isn't installed. Run the one-line update command from your VPS terminal once to enable this feature.</p>
+       <Alert.Root class="settings-warning"><AlertCircle size={15}/><Alert.Description>The web updater isn't installed. Run the one-line update command from your VPS terminal once to enable this feature.</Alert.Description></Alert.Root>
       {/if}
       <div class="settings-actions update-buttons">
        <Button type="button" variant="outline" disabled={updateChecking||updateBusy} onclick={()=>loadUpdateInfo()}><RefreshCw size={16}/> {updateChecking?'Checking…':'Check for updates'}</Button>
@@ -764,7 +846,7 @@
        {/if}
       </div>
       {#if sessionsError}
-       <p class="update-status-error" role="alert"><AlertCircle size={15}/>{sessionsError}</p>
+       <Alert.Root variant="destructive" class="update-status-error"><AlertCircle size={15}/><Alert.Description>{sessionsError}</Alert.Description></Alert.Root>
       {/if}
       {#if sessionsLoading&&!sessionsLoaded}
        <div class="sessions-empty" role="status"><Spinner class="size-5"/><p>Loading sessions…</p></div>
@@ -772,6 +854,9 @@
        <div class="session-list" role="list">
         {#each sessions as session (session.id)}
          <article class="session-item" class:current={session.current} role="listitem">
+          <Avatar.Root class="session-avatar" aria-hidden="true">
+           <Avatar.Fallback>{browserLabel(session.userAgent).slice(0,1)}</Avatar.Fallback>
+          </Avatar.Root>
           <div class="session-item-main">
            <div class="session-item-heading">
             <h3>{browserLabel(session.userAgent)}</h3>
@@ -816,7 +901,7 @@
       <div class="settings-info">
        <span>Current server</span><strong>{typeof window!=='undefined'?window.location.host :'VPS_IP'}</strong>
       </div>
-      <p class="settings-warning"><AlertCircle size={15}/> Direct HTTP access is unencrypted. On an untrusted network your PIN, session cookies, and any TMDB token submitted here may be intercepted. Restrict port 80 to trusted IP addresses where possible.</p>
+      <Alert.Root class="settings-warning"><AlertCircle size={15}/><Alert.Description>Direct HTTP access is unencrypted. On an untrusted network your PIN, session cookies, and any TMDB token submitted here may be intercepted. Restrict port 80 to trusted IP addresses where possible.</Alert.Description></Alert.Root>
      </Card.Root>
     </div>
    {:else}
@@ -837,17 +922,21 @@
       <Card.Root class="stat"><div class="stat-icon"><HardDrive size={17}/></div><div><span>Space for downloads</span><strong>{storage?.known?formatBytes(storage.available):'—'}</strong></div></Card.Root>
      </div>
      {#if storage&&!storage.known}
-      <div class="storage-overview" role="status">
-       <div class="storage-overview-label"><Shield size={14}/><strong>Storage check</strong></div>
-       <p class="storage-error">{storage.error||'Checking server storage before downloads can start.'}</p>
-      </div>
+      <Alert.Root class="storage-overview">
+       <Shield size={14}/>
+       <Alert.Title>Storage check</Alert.Title>
+       <Alert.Description class="storage-error">{storage.error||'Checking server storage before downloads can start.'}</Alert.Description>
+      </Alert.Root>
      {/if}
      {#if tmdbChecked&&!tmdbConfigured&&!settingsLoading}
-      <div class="tmdb-required" role="alert">
+      <Alert.Root class="tmdb-required">
        <AlertCircle size={19}/>
-       <div><strong>TMDB API key required</strong><p>Set your TMDB API key in Settings before downloading a movie.</p></div>
-       <Button variant="outline" size="sm" class="tmdb-settings-button" onclick={()=>navigate('settings')}><Settings size={15}/> Open Settings</Button>
-      </div>
+       <Alert.Title>TMDB API key required</Alert.Title>
+       <Alert.Description>Set your TMDB API key in Settings before downloading a movie.</Alert.Description>
+       <Alert.Action>
+        <Button variant="outline" size="sm" class="tmdb-settings-button" onclick={()=>navigate('settings')}><Settings size={15}/> Open Settings</Button>
+       </Alert.Action>
+      </Alert.Root>
      {/if}
      <section class="downloader-magnet-panel" aria-label="Add a movie download">
       <form class="magnet-form downloader-magnet-form" onsubmit={(e)=>{e.preventDefault();void add()}}>
@@ -873,9 +962,9 @@
         <p>{active} downloading · {completed} completed</p>
        </div>
        <div class="download-queue-filters" role="group" aria-label="Filter downloads">
-        <button type="button" class:active={queueFilter==='all'} aria-pressed={queueFilter==='all'} onclick={()=>queueFilter='all'}>All</button>
-        <button type="button" class:active={queueFilter==='active'} aria-pressed={queueFilter==='active'} onclick={()=>queueFilter='active'}>In progress</button>
-        <button type="button" class:active={queueFilter==='completed'} aria-pressed={queueFilter==='completed'} onclick={()=>queueFilter='completed'}>Completed</button>
+        <Toggle class="queue-filter-toggle" pressed={queueFilter==='all'} onPressedChange={(pressed)=>{if(pressed)queueFilter='all'}} aria-label="Show all downloads">All</Toggle>
+        <Toggle class="queue-filter-toggle" pressed={queueFilter==='active'} onPressedChange={(pressed)=>{if(pressed)queueFilter='active'}} aria-label="Show in-progress downloads">In progress</Toggle>
+        <Toggle class="queue-filter-toggle" pressed={queueFilter==='completed'} onPressedChange={(pressed)=>{if(pressed)queueFilter='completed'}} aria-label="Show completed downloads">Completed</Toggle>
        </div>
       </div>
       {#if queueItems.length}
@@ -900,7 +989,7 @@
             </div>
             {#if m.status==='downloading'||m.status==='paused'}
              <div class="queue-progress">
-              <div class="progress-track" role="progressbar" aria-label={m.title+' download progress'} aria-valuenow={percent(m)} aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style:width={percent(m)+'%'}></div></div>
+              <Progress class="queue-progress-bar" value={percent(m)} aria-label={m.title+' download progress'}/>
               <span>{percent(m).toFixed(1)}%</span>
              </div>
             {:else if m.status==='metadata'}
@@ -970,10 +1059,10 @@
    <footer class="footer"><span>© Cloudflix · Made with ❤️ by Kobz</span><span>Movie data from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer">TMDB</a>; not endorsed or certified by TMDB.</span></footer>
   </main>
   <nav class="mobile-nav" aria-label="Mobile navigation">
-   <button class:active={page==='home'} onclick={()=>navigate('home')}><House size={19}/> Home</button>
-   <button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={19}/> Downloader {#if active>0}<span class="mobile-download-count" aria-label={active+' active downloads'}>{active}</span>{/if}</button>
-   <button class:active={page==='settings'} onclick={()=>navigate('settings')}><Settings size={19}/> Settings</button>
-   <button onclick={signOut}><LogOut size={19}/> Log out</button>
+   <button type="button" class:active={page==='home'} aria-current={page==='home'?'page':undefined} onclick={()=>navigate('home')}><House size={19} aria-hidden="true"/> Home</button>
+   <button type="button" class:active={page==='downloader'} aria-current={page==='downloader'?'page':undefined} onclick={()=>navigate('downloader')}><Download size={19} aria-hidden="true"/> Downloader {#if active>0}<span class="mobile-download-count" aria-label={active+' active downloads'}>{active}</span>{/if}</button>
+   <button type="button" class:active={page==='settings'} aria-current={page==='settings'?'page':undefined} onclick={()=>navigate('settings')}><Settings size={19} aria-hidden="true"/> Settings</button>
+   <button type="button" onclick={signOut}><LogOut size={19} aria-hidden="true"/> Log out</button>
   </nav>
  </div>
  {#if fileViewer}
@@ -987,10 +1076,15 @@
      <Button variant="ghost" size="icon-sm" class="file-inspector-close" aria-label="Close files" onclick={closeFileViewer}><X size={17}/></Button>
     </header>
     {#if fileViewer.status==='rejected'}
-     <div class="file-inspector-alert" role="status"><AlertCircle size={16}/><span>{inspectedFiles?.reason||'Torrent rejected. No file content was downloaded.'}</span></div>
+     <Alert.Root variant="destructive" class="file-inspector-alert"><AlertCircle size={16}/><Alert.Description>{inspectedFiles?.reason||'Torrent rejected. No file content was downloaded.'}</Alert.Description></Alert.Root>
     {/if}
     {#if fileViewerLoading}
-     <div class="file-inspector-empty" role="status"><Spinner class="size-5"/><p>Inspecting torrent file list…</p></div>
+     <div class="file-inspector-empty" role="status">
+      <div class="file-inspector-skeleton" aria-hidden="true">
+       {#each Array(5) as _, i (i)}<Skeleton class="file-inspector-skeleton-row"/>{/each}
+      </div>
+      <p>Inspecting torrent file list…</p>
+     </div>
     {:else if fileViewerError}
      <div class="file-inspector-empty" role="alert"><AlertCircle size={21}/><p>{fileViewerError}</p><Button variant="outline" size="sm" onclick={retryFileInspection}>Retry</Button></div>
     {:else if inspectedFiles?.fetching}
@@ -1002,18 +1096,20 @@
     {:else if inspectedFiles?.available}
      <div class="file-inspector-summary">
       <span>{inspectedFiles.total} {inspectedFiles.total===1?'file':'files'} found</span>
-      <span>{inspectedFiles.rejected?'No files downloaded':'Only MP4, MKV and SRT files are selected for download'}</span>
+      <Badge variant={inspectedFiles.rejected?'destructive':'secondary'} class="file-inspector-summary-badge">{inspectedFiles.rejected?'No files downloaded':'MP4 · MKV · SRT selected'}</Badge>
      </div>
-     <div class="file-inspector-list" role="list">
-      {#each inspectedFiles.files as file,i (i)}
-       <div class="file-inspector-item" role="listitem">
-        <span class="file-inspector-item-icon"><Files size={15}/></span>
-        <span class="file-inspector-filepath" title={file.path}>{file.path}</span>
-        <span class="file-inspector-filesize">{formatBytes(file.size)}</span>
-        <span class="file-inspector-file-status" class:selected={file.selected}>{file.selected?'Selected':inspectedFiles.rejected?'Not downloaded':'Skipped'}</span>
-       </div>
-      {/each}
-     </div>
+     <ScrollArea.Root class="file-inspector-list" orientation="vertical">
+      <div role="list">
+       {#each inspectedFiles.files as file,i (i)}
+        <div class="file-inspector-item" role="listitem">
+         <span class="file-inspector-item-icon"><Files size={15}/></span>
+         <span class="file-inspector-filepath" title={file.path}>{file.path}</span>
+         <span class="file-inspector-filesize">{formatBytes(file.size)}</span>
+         <Badge variant={file.selected?'secondary':'outline'} class="file-inspector-file-status{file.selected?' selected':''}">{file.selected?'Selected':inspectedFiles.rejected?'Not downloaded':'Skipped'}</Badge>
+        </div>
+       {/each}
+      </div>
+     </ScrollArea.Root>
      {#if inspectedFiles.truncated}
       <p class="file-inspector-note">Showing the first {inspectedFiles.files.length} files of {inspectedFiles.total}. The file list is limited for performance.</p>
      {/if}
@@ -1026,6 +1122,22 @@
       {/if}
      </div>
     {/if}
+   </Dialog.Content>
+  </Dialog.Root>
+ {/if}
+ {#if magnetDialog}
+  <Dialog.Root open={Boolean(magnetDialog)} onOpenChange={(open)=>{if(!open)magnetDialog=null}}>
+   <Dialog.Content class="magnet-dialog" aria-describedby={undefined}>
+    <Dialog.Header>
+     <Dialog.Title>Copy magnet link</Dialog.Title>
+     <Dialog.Description>Your browser blocked clipboard access. Select the link below and copy it manually.</Dialog.Description>
+    </Dialog.Header>
+    <Label for="magnet-copy-field">Magnet link for {magnetDialog.title}</Label>
+    <Input id="magnet-copy-field" class="magnet-copy-field" readonly value={magnetDialog.magnet} onfocus={(event)=>event.currentTarget.select()} onclick={(event)=>event.currentTarget.select()} spellcheck={false}/>
+    <Dialog.Footer>
+     <Button variant="outline" onclick={()=>magnetDialog=null}>Close</Button>
+     <Button onclick={copyMagnetAgain}><Copy size={15}/> Copy again</Button>
+    </Dialog.Footer>
    </Dialog.Content>
   </Dialog.Root>
  {/if}
@@ -1075,15 +1187,23 @@
       </div>
       <div class="cinema-player-actions">
        {#if playbackTracks.length}
-        <button
-         class="cinema-cc-button"
-         class:active={ccEnabled}
-         type="button"
-         aria-label={ccEnabled?'Disable captions':'Enable captions'}
-         aria-pressed={ccEnabled}
-         title={ccEnabled?'Turn captions off':'Turn captions on'}
-         onclick={toggleCaptions}
-        >CC</button>
+        <Tooltip.Root>
+         <Tooltip.Trigger>
+          {#snippet child({ props })}
+           <button
+            {...props}
+            class="cinema-cc-button"
+            class:active={ccEnabled}
+            type="button"
+            aria-label={ccEnabled?'Disable captions':'Enable captions'}
+            aria-pressed={ccEnabled}
+            title={ccEnabled?'Turn captions off':'Turn captions on'}
+            onclick={toggleCaptions}
+           >CC</button>
+          {/snippet}
+         </Tooltip.Trigger>
+         <Tooltip.Content>{ccEnabled?'Turn captions off':'Turn captions on'}</Tooltip.Content>
+        </Tooltip.Root>
         {#if ccEnabled}
          <div class="cinema-caption-languages" role="group" aria-label="Available subtitles">
           {#each playbackTracks as sub,i (sub.path)}
@@ -1098,7 +1218,14 @@
          </div>
         {/if}
        {/if}
-       <Button variant="outline" size="sm" class="cinema-fullscreen-button" onclick={enterFullscreen}><Maximize2 size={15}/> Fullscreen</Button>
+       <Tooltip.Root>
+        <Tooltip.Trigger>
+         {#snippet child({ props })}
+          <Button {...props} variant="outline" size="sm" class="cinema-fullscreen-button" onclick={enterFullscreen} aria-label="Enter fullscreen"><Maximize2 size={15}/> Fullscreen</Button>
+         {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content>Enter fullscreen</Tooltip.Content>
+       </Tooltip.Root>
       </div>
      </div>
      {:else}

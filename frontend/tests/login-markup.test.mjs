@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 
 const component = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const start = component.indexOf("{:else if auth==='login'}")
-const end = component.indexOf('{:else}\n <div class="app-shell"', start)
+const end = component.indexOf('{:else}\n <div class="app-shell', start)
 assert.ok(start !== -1 && end > start, 'Login block should be present')
 const login = component.slice(start, end)
 

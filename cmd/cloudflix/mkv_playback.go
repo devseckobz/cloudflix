@@ -14,6 +14,7 @@ import (
  "os/exec"
  "path/filepath"
  "regexp"
+ "runtime"
  "strconv"
  "strings"
  "sync"
@@ -71,6 +72,17 @@ var validCaptionLang=regexp.MustCompile("^[a-z]{2,3}(-[a-z]{2})?$")
 func newMKVManager()*mkvManager{
  return &mkvManager{jobs:map[string]*mkvJob{},slot:make(chan struct{},1)}
 }
+// transcodeThreads gives libx264 a real share of the machine without letting a
+// conversion monopolize every core: the HTTP server, the torrent client and
+// the media range handlers still have to answer inside a frame budget while a
+// movie is being prepared. The old hard-coded 2 left a 16-core box mostly idle
+// and made a feature-length transcode take hours.
+func transcodeThreads()int{
+ threads:=runtime.NumCPU()/2
+ if threads<2{threads=2}
+ if threads>8{threads=8}
+ return threads
+}
 func mkvKey(hash,path string)string{
  h:=sha256.Sum256([]byte(hash+"\x00"+path))
  return hex.EncodeToString(h[:])
@@ -92,12 +104,7 @@ func (a *application) validatedMKVSource(hash,path string)(*os.File,error){
  item:=e.entries[hash]
  permitted:=false
  if item!=nil && item.validated && item.rejectionReason=="" && item.torrent!=nil && item.torrent.Info()!=nil{
-  for _,file:=range item.torrent.Files(){
-   if filepath.ToSlash(file.Path())==path && file.Length()>0 && verifiedFile(file){
-    permitted=true
-    break
-   }
-  }
+  permitted=e.fileVerifiedLocked(item,item.torrent,path)
  }
  e.mu.Unlock()
  if !permitted{return nil,errors.New("MKV playback is available only after download verification")}
@@ -224,9 +231,18 @@ func (a *application) updateMKVJob(job *mkvJob,state,message string){
  job.message=message
  a.playback.mu.Unlock()
 }
+// boundedCommandOutput keeps a media tool's stdout from growing without bound.
+// It truncates instead of failing: returning an error here would abort the
+// whole conversion, and a legitimate long encode must never be killed by a
+// diagnostic cap. ffmpeg's stderr is discarded, so this only bounds ffprobe's
+// JSON, which is parsed and rejected cleanly if it was cut short.
 type boundedCommandOutput struct{data bytes.Buffer}
 func (w *boundedCommandOutput)Write(p []byte)(int,error){
- if w.data.Len()+len(p)>256<<10{return 0,errors.New("media tool output limit exceeded")}
+ const limit=256<<10
+ if room:=limit-w.data.Len();room<=0{return len(p),nil}else if len(p)>room{
+  w.data.Write(p[:room])
+  return len(p),nil
+ }
  return w.data.Write(p)
 }
 func commandFromMKV(ctx context.Context,exe string,source *os.File,args ...string)([]byte,error){
@@ -301,7 +317,7 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
  args:=[]string{"-nostdin","-hide_banner","-loglevel","error","-y",
   "-i","/proc/self/fd/3","-map","0:v:0","-map","0:a:0?","-sn","-dn"}
  if copyVideo{args=append(args,"-c:v","copy")}else{
-  args=append(args,"-c:v","libx264","-preset","veryfast","-crf","24","-pix_fmt","yuv420p","-threads","2")
+  args=append(args,"-c:v","libx264","-preset","veryfast","-crf","24","-pix_fmt","yuv420p","-threads",strconv.Itoa(transcodeThreads()))
  }
  if copyAudio{args=append(args,"-c:a","copy")}else{
   args=append(args,"-c:a","aac","-b:a","160k")
@@ -389,6 +405,13 @@ func (a *application) serveMKVCache(w http.ResponseWriter,r *http.Request,subtit
  }
  w.Header().Set("Content-Type",contentType)
  w.Header().Set("Content-Disposition","inline")
- w.Header().Set("Cache-Control","private, no-store")
- http.ServeContent(w,r,filename,info.ModTime(),file)
+ if subtitle{
+  w.Header().Set("Cache-Control","private, no-store")
+  http.ServeContent(w,r,filename,info.ModTime(),file)
+  return
+ }
+ // The converted file is written once and renamed into place, so a strong
+ // validator lets the player reuse buffered ranges across seeks instead of
+ // re-downloading them. Still private to the session and revalidated on use.
+ serveVideoBody(w,r,filename,info.Size(),info.ModTime(),file)
 }

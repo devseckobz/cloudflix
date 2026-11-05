@@ -7,7 +7,9 @@ import (
  "os"
  "path/filepath"
  "regexp"
+ "strconv"
  "strings"
+ "time"
 )
 
 const maxSubtitleBytes int64 = 8 << 20
@@ -40,6 +42,24 @@ func convertSRTToVTT(raw []byte) []byte {
  return []byte("WEBVTT\n\n"+normalized)
 }
 
+// videoETag is a strong validator derived from the bytes on disk. A replaced
+// download changes size or mtime, so a stale body can never be reused.
+func videoETag(size int64,modtime time.Time)string{
+ return `"`+strconv.FormatInt(size,16)+"-"+strconv.FormatInt(modtime.UnixNano(),16)+`"`
+}
+
+// serveVideoBody lets the browser keep the movie bytes it already fetched.
+// no-store is right for the HTML shell, JSON APIs and magnet links, but it
+// forced a full re-download of every byte range the player had already
+// buffered, which is exactly what makes a seek stall. The response is still
+// private to the authenticated session and revalidated on every use, so a
+// replaced file is re-fetched rather than served from a stale cache.
+func serveVideoBody(w http.ResponseWriter,r *http.Request,name string,size int64,modtime time.Time,content io.ReadSeeker){
+ w.Header().Set("ETag",videoETag(size,modtime))
+ w.Header().Set("Cache-Control","private, max-age=0, must-revalidate")
+ http.ServeContent(w,r,name,modtime,content)
+}
+
 // serveMediaFile reads only from an os.Root capability, keeping torrent names
 // unable to escape the downloads directory through traversal or symlinks.
 func serveMediaFile(w http.ResponseWriter, r *http.Request, root *os.Root, name string) {
@@ -66,8 +86,8 @@ func serveMediaFile(w http.ResponseWriter, r *http.Request, root *os.Root, name 
  }
  w.Header().Set("Content-Type",mime)
  w.Header().Set("Content-Disposition","inline")
- w.Header().Set("Cache-Control","private, no-store")
  if subtitle && strings.EqualFold(filepath.Ext(local),".srt") {
+  w.Header().Set("Cache-Control","private, no-store")
   if stat.Size()>maxSubtitleBytes {
    fail(w,http.StatusRequestEntityTooLarge,"subtitle file is too large")
    return
@@ -80,7 +100,7 @@ func serveMediaFile(w http.ResponseWriter, r *http.Request, root *os.Root, name 
   http.ServeContent(w,r,strings.TrimSuffix(stat.Name(),filepath.Ext(stat.Name()))+".vtt",stat.ModTime(),bytes.NewReader(convertSRTToVTT(data)))
   return
  }
- http.ServeContent(w,r,stat.Name(),stat.ModTime(),file)
+ serveVideoBody(w,r,stat.Name(),stat.Size(),stat.ModTime(),file)
 }
 
 // A completed torrent is required before media streams or subtitle files can
@@ -97,15 +117,9 @@ func (a *application) streamMedia(w http.ResponseWriter,r *http.Request) {
  item:=e.entries[hash]
  valid:=false
  if item!=nil && item.validated && item.rejectionReason=="" && item.torrent!=nil && item.torrent.Info()!=nil {
-  for _,file:=range item.torrent.Files(){
-   if filepath.ToSlash(file.Path())==requested &&
-      allowedMediaPath(requested) &&
-      file.Length()>0 &&
-      verifiedFile(file) {
-    valid=true
-    break
-   }
-  }
+  // Memoized per file: the piece walk used to run on every authenticated
+  // range request while holding the engine mutex, stalling concurrent seeks.
+  valid=e.fileVerifiedLocked(item,item.torrent,requested)
  }
  e.mu.Unlock()
  if !valid {

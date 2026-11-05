@@ -254,6 +254,14 @@
 }
 .nav-movie-search button:hover { color: var(--foreground); }
 
+/* The sticky topbar keeps its frosted look while browsing, but a full-viewport
+   blur is wasted GPU work while the theater is open: nothing under it is
+   visible. Drop the filter (not just the element) during playback. */
+.app-shell.theater-open .topbar,
+.app-shell.theater-open .mobile-nav {
+  backdrop-filter: none;
+}
+
 .nav-page-caption {
   margin-right: auto;
   font-size: 13px;
@@ -308,46 +316,28 @@
   margin: 0;
 }
 
-/* ------------------------------------------------------------------ toasts */
+/* ------------------------------------------------------------------ toasts
+   Sonner renders its own fixed portal (#svelte-sonner / [data-sonner-toaster]).
+   Only colour and typography are themed here; positioning and animation stay
+   with the library so toasts never shift the app layout. */
 
-.main > .toast {
-  position: fixed;
-  right: 22px;
-  bottom: 22px;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  max-width: min(430px, calc(100vw - 32px));
-  padding: 12px 13px;
+[data-sonner-toaster] {
+  --normal-bg: var(--popover);
+  --normal-text: var(--popover-foreground);
+  --normal-border: var(--border);
+  font-family: var(--font-sans);
+}
+[data-sonner-toaster] [data-sonner-toast] {
   border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--popover);
-  color: var(--popover-foreground);
-  font-size: 12.5px;
   box-shadow: var(--shadow-panel);
-  animation: toast-in 0.18s ease-out;
+  font-size: 12.5px;
+  line-height: 1.5;
 }
-.main > .toast svg { flex: 0 0 auto; }
-.main > .toast.success { border-color: color-mix(in oklch, var(--success) 42%, var(--border)); }
-.main > .toast.success svg { color: var(--success); }
-.main > .toast.error { border-color: color-mix(in oklch, var(--destructive) 46%, var(--border)); }
-.main > .toast.error svg { color: var(--destructive); }
-.main > .toast button {
-  margin-left: 4px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  padding: 2px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--muted-foreground);
-  cursor: pointer;
-}
-.main > .toast button:hover { color: var(--foreground); }
-@keyframes toast-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+[data-sonner-toaster] [data-sonner-toast][data-type="success"] [data-icon] { color: var(--success); }
+[data-sonner-toaster] [data-sonner-toast][data-type="error"] [data-icon] { color: var(--destructive); }
+@media (max-width: 720px) {
+  /* Clear the fixed bottom nav. */
+  [data-sonner-toaster] { bottom: calc(76px + env(safe-area-inset-bottom)); }
 }
 
 /* ------------------------------------------------------------------ footer */
@@ -481,26 +471,31 @@
   display: flex;
   flex: 0 1 auto;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
   overflow: hidden;
 }
+/* inline-block, not inline-flex: text-overflow only applies to block
+   containers. As a flex container the label is an anonymous flex item, so a
+   long genre was hard-clipped mid-word instead of being ellipsized. */
 .movie-year-badge,
 .movie-genre-badge {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
   min-width: 0;
-  padding: 3px 6px;
+  padding: 3px 5px;
   border: 1px solid;
   border-radius: var(--radius-sm);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 650;
-  line-height: 1.25;
+  letter-spacing: -0.1px;
+  line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  vertical-align: middle;
 }
-/* The year never shrinks; the genre is the field that gives way. */
+/* The year never shrinks; the genre is the field that gives way. Both badges
+   are flex items, so their display is blockified and text-overflow applies. */
 .movie-year-badge { flex: 0 0 auto; }
 .movie-genre-badge { flex: 0 1 auto; }
 .movie-year-badge {
@@ -522,6 +517,25 @@
   font-size: 11.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* Loading placeholders mirror the real card geometry so the grid does not
+   reflow when the first SSE snapshot lands. */
+.movie-library-skeleton { display: block; }
+.movie-library-skeleton-poster {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--radius-md);
+}
+.movie-library-skeleton-line {
+  height: 13px;
+  margin: 10px 0 7px;
+  border-radius: var(--radius-sm);
+}
+.movie-library-skeleton-meta {
+  width: 62%;
+  height: 21px;
+  border-radius: var(--radius-sm);
 }
 
 /* The Empty primitive is flex-1, so neutralise the stretch: an empty library
@@ -564,16 +578,27 @@
   margin: auto auto 0;
   padding: 20px 0 0;
 }
+/* shadcn Pagination.Root > Pagination.Content (ul) > Pagination.Item (li) >
+   button. The list chrome is reset here; the buttons keep the boxed look. */
 .library-bottom-pagination {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
 }
 .library-bottom-pagination::-webkit-scrollbar { display: none; }
+.library-bottom-pagination [data-slot="pagination-content"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.library-bottom-pagination [data-slot="pagination-item"] { display: flex; }
 .library-bottom-pagination button {
   display: inline-flex;
   align-items: center;
@@ -581,6 +606,8 @@
   flex: 0 0 34px;
   width: 34px;
   height: 34px;
+  min-width: 34px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--card);
@@ -596,7 +623,8 @@
   border-color: color-mix(in oklch, var(--border), var(--foreground) 20%);
   color: var(--foreground);
 }
-.library-bottom-pagination button.active {
+.library-bottom-pagination button.active,
+.library-bottom-pagination button[data-active="true"] {
   background: var(--primary);
   border-color: var(--primary);
   color: var(--primary-foreground);
@@ -680,11 +708,12 @@
   white-space: nowrap;
 }
 
+/* Built on the shadcn Alert grid: icon column + title/description column. */
 .storage-overview {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
+  gap: 4px 10px;
   padding: 11px 14px;
   margin-bottom: 26px;
   border: 1px solid var(--border);
@@ -693,23 +722,23 @@
   color: var(--muted-foreground);
   font-size: 11.5px;
 }
-.storage-overview-label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--success);
-  white-space: nowrap;
+.storage-overview > svg { color: var(--success); }
+.storage-overview [data-slot="alert-title"] { color: var(--success); font-size: 11.5px; font-weight: 600; }
+.storage-overview [data-slot="alert-description"] {
+  grid-column: 2;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  text-align: left;
+  color: var(--muted-foreground);
 }
-.storage-overview-label strong { font-weight: 600; }
-.storage-overview p { margin: 0; line-height: 1.7; text-align: right; }
-.storage-overview p strong { color: var(--foreground); font-weight: 600; }
-.storage-overview p span { color: var(--muted-foreground); }
 .storage-overview .storage-error { color: color-mix(in oklch, var(--destructive), var(--foreground) 25%); }
 
 .tmdb-required {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 4px 12px;
   padding: 14px 16px;
   margin-bottom: 22px;
   border: 1px solid color-mix(in oklch, var(--warning) 34%, var(--border));
@@ -717,14 +746,18 @@
   background: color-mix(in oklch, var(--warning) 8%, transparent);
   color: var(--warning);
 }
-.tmdb-required > svg { flex: 0 0 auto; }
-.tmdb-required > div { flex: 1; }
-.tmdb-required strong { font-size: 12.5px; font-weight: 650; }
-.tmdb-required p {
-  margin: 4px 0 0;
+.tmdb-required > svg { grid-row: 1 / span 2; }
+.tmdb-required [data-slot="alert-title"] { font-size: 12.5px; font-weight: 650; }
+.tmdb-required [data-slot="alert-description"] {
+  margin: 0;
   font-size: 11.5px;
   line-height: 1.6;
   color: color-mix(in oklch, var(--warning), var(--foreground) 30%);
+}
+.tmdb-required [data-slot="alert-action"] {
+  grid-row: 1 / span 2;
+  grid-column: 3;
+  position: static;
 }
 
 .downloader-magnet-panel { margin-bottom: 30px; }
@@ -839,30 +872,37 @@
   border-radius: var(--radius-md);
   background: var(--muted);
 }
-.download-queue-filters button {
+/* shadcn Toggle: aria-pressed drives the selected look, so the filter state is
+   exposed to assistive tech without a separate aria-pressed attribute. */
+.download-queue-filters [data-slot="toggle"] {
+  height: 28px;
+  min-width: 0;
+  padding: 0 12px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  padding: 6px 12px;
   color: var(--muted-foreground);
   font-size: 11.5px;
   font-weight: 600;
   white-space: nowrap;
-  cursor: pointer;
   transition: background-color 0.14s ease, color 0.14s ease;
 }
-.download-queue-filters button:hover:not(.active) { color: var(--foreground); }
-.download-queue-filters button.active {
+.download-queue-filters [data-slot="toggle"]:hover { color: var(--foreground); }
+.download-queue-filters [data-slot="toggle"][aria-pressed="true"] {
   background: var(--card);
   color: var(--foreground);
   box-shadow: 0 1px 3px oklch(0 0 0 / 35%);
 }
-.download-queue-filters button:focus-visible {
+.download-queue-filters [data-slot="toggle"]:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
 
 .queue-list { display: grid; gap: 8px; }
+/* Rows used to vary by ~2.75px depending on whether they carried a progress
+   bar, a metadata note or nothing (100 / 101.25 / 102.75). The poster column
+   is a fixed 74px; pinning the info column to the same height makes every row
+   resolve to exactly 100px (74 + 12*2 padding + 1px borders). */
 .queue-item {
   display: flex;
   align-items: center;
@@ -874,6 +914,7 @@
   background: var(--card);
   transition: border-color 0.15s ease, background-color 0.15s ease;
 }
+
 .queue-item:hover { border-color: color-mix(in oklch, var(--border), var(--foreground) 16%); }
 .queue-item.download-rejected {
   border-color: color-mix(in oklch, var(--destructive) 38%, var(--border));
@@ -892,7 +933,10 @@
   color: var(--muted-foreground);
 }
 .queue-art img { width: 100%; height: 100%; object-fit: cover; }
-.queue-info { flex: 1; min-width: 0; }
+/* 78px is the tallest natural content (heading 22 + 7 + file info 21 + 11 +
+   progress 15.75 = 76.75). Pinning it makes every row exactly 104px tall
+   (78 + 12*2 padding + 1*2 borders) regardless of status. */
+.queue-info { flex: 1; min-width: 0; min-height: 78px; display: flex; flex-direction: column; justify-content: center; }
 .queue-item-heading {
   display: flex;
   align-items: center;
@@ -955,25 +999,16 @@
   gap: 11px;
   margin-top: 11px;
 }
-.queue-progress .progress-track {
+/* shadcn Progress: the indicator is translated, not width-animated, so the
+   browser can composite it without a layout pass on every SSE tick. */
+.queue-progress-bar {
   flex: 1;
   height: 5px;
-  overflow: hidden;
-  border-radius: 999px;
   background: var(--muted);
 }
-.progress-track {
-  flex: 1;
-  height: 5px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--muted);
-}
-.progress-fill {
-  height: 100%;
-  border-radius: inherit;
+.queue-progress-bar [data-slot="progress-indicator"] {
   background: var(--primary);
-  transition: width 0.35s ease;
+  transition: transform 0.35s ease;
 }
 .queue-progress > span {
   flex: 0 0 46px;
@@ -1096,11 +1131,12 @@
   color: var(--muted-foreground);
 }
 
+/* Status chips are the shadcn Badge primitive; only the pill geometry and the
+   semantic tint are re-specified here so the Badge base class stays intact. */
 .integration-status {
   flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
   gap: 5px;
+  height: auto;
   padding: 5px 9px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -1175,16 +1211,22 @@
   font-weight: 600;
 }
 
+/* shadcn Alert (grid: icon column + text column), tinted with the warning token. */
 .settings-warning {
-  display: flex;
-  align-items: flex-start;
   gap: 8px;
   margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
   font-size: 11.5px;
   line-height: 1.65;
   color: color-mix(in oklch, var(--warning), var(--foreground) 14%);
 }
-.settings-warning svg { flex: 0 0 auto; margin-top: 2px; }
+.settings-warning [data-slot="alert-description"] {
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: inherit;
+}
 
 .update-versions {
   display: grid;
@@ -1209,9 +1251,7 @@
 }
 
 .update-progress {
-  display: flex;
-  align-items: flex-start;
-  gap: 11px;
+  gap: 4px 11px;
   margin: 14px 0;
   padding: 13px 14px;
   border: 1px solid color-mix(in oklch, var(--info) 32%, var(--border));
@@ -1219,27 +1259,31 @@
   background: color-mix(in oklch, var(--info) 9%, transparent);
   color: var(--info);
 }
-.update-progress > svg { flex: 0 0 auto; margin-top: 2px; }
-.update-progress strong { font-size: 12.5px; font-weight: 650; }
-.update-progress p {
-  margin: 4px 0 0;
+.update-progress [data-slot="alert-title"] { font-size: 12.5px; font-weight: 650; }
+.update-progress [data-slot="alert-description"] {
+  margin: 0;
   font-size: 11.5px;
   line-height: 1.6;
   color: var(--muted-foreground);
 }
 .update-status-good,
 .update-status-error {
-  display: flex;
-  align-items: center;
   gap: 8px;
   margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
   font-size: 12px;
   line-height: 1.6;
 }
+.update-status-good [data-slot="alert-description"],
+.update-status-error [data-slot="alert-description"] {
+  font-size: 12px;
+  line-height: 1.6;
+  color: inherit;
+}
 .update-status-good { color: var(--success); }
 .update-status-error { color: var(--destructive); }
-.update-status-good svg,
-.update-status-error svg { flex: 0 0 auto; }
 
 .update-buttons { margin-top: 18px; }
 
@@ -1270,6 +1314,15 @@
   border-color: color-mix(in oklch, var(--primary) 34%, var(--border));
   background: color-mix(in oklch, var(--primary) 6%, var(--muted));
 }
+.session-avatar {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 14%, transparent);
+}
 .session-item-main { flex: 1; min-width: 0; }
 .session-item-heading {
   display: flex;
@@ -1292,6 +1345,7 @@
   flex: 0 0 auto;
   height: auto;
   padding: 2px 7px;
+  border-radius: var(--radius-sm);
   font-size: 10px;
   font-weight: 650;
 }
@@ -1354,6 +1408,10 @@
 
 /* --------------------------------------------------------------- theatre */
 
+/* NO backdrop-filter here. This element is the ancestor of the <video>, and a
+   blur on an ancestor forces the compositor to re-blur the whole backdrop on
+   every video frame — the single largest UI cost on the playback path. The
+   opaque scrim alone reads identically because the backdrop is 84% black. */
 .cinema-player-backdrop {
   position: fixed;
   inset: 0;
@@ -1363,8 +1421,8 @@
   justify-content: center;
   padding: 20px;
   overflow-y: auto;
-  background: oklch(0 0 0 / 84%);
-  backdrop-filter: blur(6px);
+  background: oklch(0 0 0 / 92%);
+  contain: paint;
 }
 .cinema-player-modal {
   width: min(1080px, 96vw);
@@ -1551,17 +1609,9 @@
 
 /* ------------------------------------------------------------ file inspector */
 
-.file-inspector-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 18px;
-  background: oklch(0 0 0 / 76%);
-  backdrop-filter: blur(4px);
-}
+/* The shadcn Dialog overlay is the backdrop now. Keep it cheap: a blur here
+   would sit over the whole app and cost a full-viewport composite. */
+[data-slot="dialog-overlay"] { backdrop-filter: none; }
 /* Overrides the shadcn dialog defaults (sm:max-w-sm, grid, p-4) so the file
    inspector can use the full width it needs for long torrent paths. */
 .file-inspector {
@@ -1620,7 +1670,10 @@
   color: var(--muted-foreground);
   font-size: 11.5px;
 }
-.file-inspector-list { overflow: auto; min-height: 0; max-height: 58dvh; }
+/* ScrollArea.Root owns the scrolling now; the viewport gets the max height so
+   the inner <div role="list"> can stay a plain semantic container. */
+.file-inspector-list { min-height: 0; max-height: 58dvh; }
+.file-inspector-list [data-slot="scroll-area-viewport"] { max-height: 58dvh; }
 .file-inspector-item {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) 92px 104px;
@@ -1646,7 +1699,9 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* shadcn Badge with the compact file-row geometry. */
 .file-inspector-file-status {
+  height: auto;
   padding: 5px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1662,6 +1717,16 @@
   background: color-mix(in oklch, var(--success) 12%, transparent);
   color: var(--success);
 }
+.file-inspector-summary-badge {
+  height: auto;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.file-inspector-skeleton { display: grid; gap: 8px; width: 100%; max-width: 520px; }
+.file-inspector-skeleton-row { height: 34px; border-radius: var(--radius-sm); }
 .file-inspector-empty {
   display: flex;
   flex-direction: column;
@@ -1681,6 +1746,25 @@
   font-size: 11px;
   line-height: 1.6;
   color: var(--muted-foreground);
+}
+
+/* ------------------------------------------------------------ magnet dialog
+   Replaces the old native clipboard fallback: a real dialog with a read-only,
+   auto-selected magnet field and an explicit retry. */
+
+.magnet-dialog { max-width: min(560px, calc(100vw - 32px)); }
+.magnet-dialog [data-slot="label"] { margin-top: 4px; font-size: 11.5px; font-weight: 600; }
+.magnet-copy-field {
+  height: auto;
+  min-height: 44px;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  cursor: text;
 }
 
 /* ------------------------------------------------------------------- auth */
@@ -1725,36 +1809,47 @@
   background: var(--primary);
   color: var(--primary-foreground);
 }
-.pin-field {
-  display: block;
+/* PIN entry is the shadcn InputOTP (bits-ui PinInput): six real cells over one
+   hidden input, so paste, autofill and keyboard entry all behave natively. */
+.pin-otp {
+  display: flex;
+  justify-content: center;
   width: 100%;
-  height: 56px;
   margin: 0 0 16px;
-  padding: 0 12px;
+}
+.pin-otp-group { gap: 8px; }
+.pin-otp-slot {
+  width: 46px;
+  height: 56px;
   border: 1px solid var(--input);
   border-radius: var(--radius-md);
   background: var(--background);
   color: var(--foreground);
-  text-align: center;
-  text-indent: 0.6em;
-  letter-spacing: 0.6em;
   font-family: var(--font-mono);
-  font-size: 24px;
+  font-size: 22px;
+  font-weight: 600;
   line-height: 1;
-  outline: none;
-  caret-color: var(--primary);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.pin-field::placeholder { color: var(--muted-foreground); opacity: 1; }
-.pin-field:focus {
+.pin-otp-slot[data-active="true"] {
   border-color: var(--ring);
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 22%, transparent);
 }
-.pin-field[aria-invalid="true"] { border-color: var(--destructive); }
+.pin-otp-invalid .pin-otp-slot { border-color: var(--destructive); }
+.pin-otp-invalid .pin-otp-slot[data-active="true"] {
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--destructive) 24%, transparent);
+}
+/* A short shake on a rejected PIN. Motion is opt-out via prefers-reduced-motion. */
+.pin-otp-invalid { animation: pin-shake 0.32s ease-in-out; }
+@keyframes pin-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
 
 .auth-error {
-  display: flex;
-  align-items: flex-start;
   gap: 8px;
   margin: 0 0 14px;
   padding: 10px 11px;
@@ -1765,7 +1860,11 @@
   font-size: 12px;
   line-height: 1.5;
 }
-.auth-error svg { flex: 0 0 auto; margin-top: 1px; }
+.auth-error [data-slot="alert-description"] {
+  font-size: 12px;
+  line-height: 1.5;
+  color: inherit;
+}
 .auth-submit {
   display: flex;
   align-items: center;
@@ -1931,8 +2030,6 @@
     font-weight: 700;
   }
 
-  .main > .toast { right: 14px; left: 14px; bottom: 76px; max-width: none; }
-
   .downloader-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .stat { padding: 11px; gap: 9px; }
   .stat-icon { flex-basis: 30px; width: 30px; height: 30px; }
@@ -1984,7 +2081,6 @@
   .cinema-caption-languages { max-width: 100%; flex: 1 1 auto; }
   .cinema-fullscreen-button { margin-left: 0; flex: 0 0 auto; }
 
-  .file-inspector-backdrop { padding: 8px; }
   .file-inspector { width: 100%; max-height: 93dvh; }
   .file-inspector-header { padding: 14px; }
   .file-inspector-summary { flex-wrap: wrap; padding: 10px 14px; }
@@ -2004,7 +2100,8 @@
   .file-inspector-note { padding: 11px 14px; }
 
   .auth-card { padding: 28px 20px 24px; }
-  .pin-field { font-size: 22px; }
+  .pin-otp-group { gap: 6px; }
+  .pin-otp-slot { width: 40px; height: 50px; font-size: 20px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2012,7 +2109,9 @@
   .movie-library-poster img,
   .movie-library-play,
   .movie-library-card,
-  .progress-fill,
+  .queue-progress-bar [data-slot="progress-indicator"],
   .status-dot { transition: none; }
-  .main > .toast { animation: none; }
+  .pin-otp-invalid { animation: none; }
+  /* Sonner animates its own toasts; opt out of the slide/fade entirely. */
+  [data-sonner-toaster] [data-sonner-toast] { animation: none !important; transition: none !important; }
 }

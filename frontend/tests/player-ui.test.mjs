@@ -22,9 +22,14 @@ test('download manager displays rejected non-video torrents',()=>{
  assert.match(component,/m\.error/)
 })
 
-test('queued notification automatically expires',()=>{
- assert.match(component,/noticeTimer=setTimeout\(\(\)=>\{notice='';noticeTimer=undefined\},4200\)/)
+test('queued notification is a self-dismissing Sonner toast',()=>{
+ // The hand-rolled notice/noticeTimer toast was replaced by Sonner, which owns
+ // auto-dismissal, stacking and the aria-live region.
+ assert.match(component,/import \{ Toaster, toast \} from '\$lib\/components\/ui\/sonner\/index\.js'/)
+ assert.match(component,/<Toaster /)
+ assert.match(component,/const notify=\(message:string\)=>toast\.success\(message\)/)
  assert.match(component,/notify\('Magnet queued/)
+ assert.doesNotMatch(component,/noticeTimer/)
 })
 
 test('theater has just a compact title, video, subtitle info and fullscreen action',()=>{

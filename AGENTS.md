@@ -32,16 +32,25 @@ This has happened twice. A push to `main` is only a release if the literal was
 bumped in that same push. Never report a release as done without confirming the
 tag on the API (see below).
 
-### When NOT to bump
+### Always bump. There is no exception.
 
-The bump rule is for shipping user-facing work. For a **docs- or
-comment-only** change (this file, `README.md`, `docs/`, code comments), do not
-bump: a release containing no binary change just adds noise to the update
-prompt. Commit and push normally, and expect the release workflow to run and
-then skip — that is correct, not a failure.
+**"Commit it" always bumps the version**, including docs-only, comment-only or
+one-line changes. The user stated this explicitly after a docs-only commit was
+pushed without a bump, and repeated it: *"always bump the version when we
+'commit it'"*.
 
-If you are unsure whether a change counts as shippable: if `go build` output or
-`static/dist` would differ, bump; if only Markdown changed, do not.
+So: every "commit it" bumps `TAG` in `release.yml`, runs the gates, commits,
+pushes, and verifies a real release exists on the API. Do not reason about
+whether a change is "worth" a release — that judgement is not ours to make. A
+release with no binary change is the accepted cost; a silently skipped release
+is the failure mode this whole section exists to prevent.
+
+Bumping `TAG` is also what makes the release real: if the literal matches an
+already-published version, every build and publish step skips while the run
+reports success.
+
+The only thing to still avoid: **never bump by two versions in one commit**, and
+never reuse a tag that already exists.
 
 ### Verifying a release
 
@@ -69,7 +78,7 @@ wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && go test -race ./cmd/cloudflix 
 
 # Frontend
 npm.cmd run check --prefix frontend      # must be 0 errors AND 0 warnings
-npm.cmd test --prefix frontend           # must stay at 60/60
+npm.cmd test --prefix frontend           # must stay at 83/83 (grows, never shrinks)
 npm.cmd run build --prefix frontend      # writes static/dist
 
 # Shell scripts (mirrors the CI step)

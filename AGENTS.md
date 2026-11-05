@@ -120,6 +120,37 @@ If `npm.cmd test` fails with `spawn EPERM`, run each file directly instead:
 - Report honest gaps. An unmeasured risk stated plainly is more useful than a
   confident guess.
 
+## Context discipline — keep requests under the payload limit
+
+A long session can hit HTTP 413 `Request Entity Too Large` from the model API.
+The error body is the OpenAI-compatible nested form
+`{"error":{"code":"413","message":"Request Entity Too Large"}}`, which looks
+nothing like this repo's own `{"error":"..."}` shape — so do not go hunting in
+`cmd/cloudflix` for it.
+
+Measured on a real 8.9 MB / 5,155-line Cloudflix session:
+
+| Contributor | Share of bytes |
+|---|---|
+| assistant messages (740 msgs, median 3.8 KB, max 96 KB) | **54 %** |
+| tool results (884 calls, avg 2.6 KB) | 25 % |
+| user messages | 2 % |
+
+The agent's own prose is the single largest term, so the fix is behavioural:
+
+- **Keep prose tight.** No restating the plan, no re-explaining a fix in three
+  places, no long recap of what a command already showed. Say the result once.
+- **Never paste large file contents.** Quote the few relevant lines and cite
+  `path:line`. A `read` of a 700-line file costs more than the fix does.
+- **Bound command output.** Prefer `Select-Object -Last N`, `tail`, `head`,
+  `Select-String` over dumping whole logs and directory listings.
+- **Do not re-run a passing gate to "confirm".** Each full suite run is
+  thousands of tokens of output. Run it when it can fail, not to feel safe.
+- If a session is already large, say so rather than loading more bulk into it.
+
+The 413 is a request-size ceiling, not a context-length one: the whole
+conversation is resent every turn, so cost compounds with each reply.
+
 ## Task tracking
 
 - Update the todo list to its final truthful state **before** delivering the

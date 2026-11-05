@@ -423,7 +423,7 @@
  <div class="app-shell" data-page={page}>
   <aside class="sidebar">
    <button class="brand brand-button" onclick={()=>navigate('home')} aria-label="Cloudflix homepage"><span class="brand-icon"><Film size={25}/></span><strong>cloud<span>flix</span></strong></button>
-   <div class="side-label">{page==='home'?'MENU':'WORKSPACE'}</div>
+   <div class="side-label">MENU</div>
    <nav aria-label="Main navigation">
     <button class:active={page==='home'} onclick={()=>navigate('home')}><House size={19}/> Home</button>
     <button class:active={page==='downloader'} onclick={()=>navigate('downloader')}><Download size={19}/> Downloader {#if active>0}<span class="nav-count" aria-label={active+' active downloads'}>{active}</span>{/if}</button>

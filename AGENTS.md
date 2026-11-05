@@ -6,7 +6,8 @@ development happens on Windows via WSL Debian.
 
 ## "commit it" means: bump the version, commit, and push
 
-When the user says "commit it" (or "commit and push"), do **all four** steps:
+When the user says "commit it" (or "commit and push"), do **exactly these
+three** steps and then stop:
 
 1. **Bump the release version** in `.github/workflows/release.yml`:
    - `TAG="vX.Y.Z"` inside the "Choose release version" step.
@@ -15,10 +16,14 @@ When the user says "commit it" (or "commit and push"), do **all four** steps:
      is no `VERSION` file and `frontend/package.json`'s version is **not** used
      for releases — do not "helpfully" bump it instead.
 2. **Run the gates** (see below) and require them green.
-3. **Commit** the version bump together with the work, using a `release:` subject
-   and the same 2-line diff shape prior releases used.
-4. **Push** to `origin main`, then **watch the workflow** and confirm a real
-   release was published (see "Verifying a release" below).
+3. **Push** to `origin main`. Report the tag and commit hash, and stop.
+
+**Do not watch, poll or verify the GitHub run.** The build and publish jobs
+belong to GitHub, not to this session. Once the push succeeds, the job is
+GitHub's to run; polling it burns minutes and thousands of tokens per release
+while adding nothing the user cannot see in their browser. Local gates are our
+responsibility and must be green *before* the push; what happens on the runner
+afterwards is not.
 
 ### The trap this rule exists to prevent
 
@@ -29,8 +34,7 @@ publish step while reporting success**. The push lands, nothing ships, and the
 green checkmark is misleading.
 
 This has happened twice. A push to `main` is only a release if the literal was
-bumped in that same push. Never report a release as done without confirming the
-tag on the API (see below).
+bumped in that same push — which is exactly why the bump is unconditional.
 
 ### Always bump. There is no exception.
 
@@ -39,33 +43,23 @@ one-line changes. The user stated this explicitly after a docs-only commit was
 pushed without a bump, and repeated it: *"always bump the version when we
 'commit it'"*.
 
-So: every "commit it" bumps `TAG` in `release.yml`, runs the gates, commits,
-pushes, and verifies a real release exists on the API. Do not reason about
-whether a change is "worth" a release — that judgement is not ours to make. A
-release with no binary change is the accepted cost; a silently skipped release
-is the failure mode this whole section exists to prevent.
+So: every "commit it" bumps `TAG` in `release.yml`, runs the gates, commits and
+pushes. Do not reason about whether a change is "worth" a release — that
+judgement is not ours to make.
 
-Bumping `TAG` is also what makes the release real: if the literal matches an
+Bumping `TAG` is what makes the release real: if the literal matches an
 already-published version, every build and publish step skips while the run
-reports success.
+reports success. That is precisely why the bump is unconditional — it removes
+the "did we remember to bump?" question rather than leaving it to be judged.
 
-The only thing to still avoid: **never bump by two versions in one commit**, and
-never reuse a tag that already exists.
+The only things to still avoid: **never bump by two versions in one commit**,
+and never reuse a tag that already exists.
 
-### Verifying a release
+### If a release is ever reported as broken
 
-Do not trust the workflow's green check alone — a skipped run is also green:
-
-```bash
-gh release view vX.Y.Z            # or the API below
-```
-
-```powershell
-(Invoke-WebRequest 'https://api.github.com/repos/devseckobz/cloudflix/releases/latest' -UseBasicParsing).Content
-```
-
-Confirm: the tag matches, `draft=false`, `prerelease=false`, and the amd64/arm64
-tarballs plus their `.sha256` files are present as assets.
+The user watches GitHub themselves; the agent does not poll it. Only look at a
+run when the user says a specific release failed, and then read that one run —
+not the whole list.
 
 ## Pre-commit gates
 

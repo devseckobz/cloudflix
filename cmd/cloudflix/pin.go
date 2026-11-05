@@ -25,7 +25,7 @@ var ErrPINNotConfigured = errors.New("Cloudflix PIN is not configured")
 // without destroying user records. New values always contain a hash of a six-digit PIN.
 func ensurePINSchema(db *sql.DB) error {
  if _,err:=db.Exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY CHECK(id=1), password_hash TEXT NOT NULL, pin_enabled INTEGER NOT NULL DEFAULT 0)");err!=nil{return err}
- if _,err:=db.Exec("CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)");err!=nil{return err}
+ if _,err:=db.Exec(sessionsTable);err!=nil{return err}
  rows,err:=db.Query("PRAGMA table_info(users)")
  if err!=nil{return err}
  hasPIN:=false

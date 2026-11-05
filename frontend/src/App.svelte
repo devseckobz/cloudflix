@@ -16,12 +16,15 @@
  import {createVersionReloadMonitor} from './lib/version-reload.js'
  import {applySubtitleSelection} from './lib/subtitles.js'
  import {copyToClipboard} from './lib/clipboard.js'
- import { Film, House, Download, Search, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, Shield, Clapperboard, AlertCircle, Star, ChevronLeft, ChevronRight, Maximize2, MonitorPlay, RefreshCw, ArrowUpCircle, Files, Copy } from '@lucide/svelte'
+ import { Film, House, Download, Search, Pause, Play, Trash2, HardDrive, Settings, LogOut, Plus, X, CheckCircle2, Shield, Clapperboard, AlertCircle, Star, ChevronLeft, ChevronRight, Maximize2, MonitorPlay, MonitorSmartphone, Users, RefreshCw, ArrowUpCircle, Files, Copy } from '@lucide/svelte'
 
  type Movie = {hash:string,title:string,year:string,genre:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
  type InspectedFile = {path:string,size:number,selected:boolean}
  type FileInspection = {available:boolean,fetching?:boolean,files:InspectedFile[],total:number,truncated?:boolean,rejected:boolean,reason:string,message?:string}
  type MKVStatus = {state:string,message?:string,videoURL?:string,subtitles?:{index:number,language:string,label:string,url:string}[]}
+ type ResumeState = {hash:string,position:number,title?:string,updatedAt?:number}
+ type SessionWatching = {hash:string,title:string,position:number}
+ type SessionInfo = {id:string,current:boolean,ip:string,userAgent:string,createdAt:number,lastSeen:number,status:'watching'|'idle'|string,watching:SessionWatching|null}
  let page = $state<'home'|'downloader'|'settings'>(typeof window!=='undefined'&&window.location.pathname==='/settings'?'settings':typeof window!=='undefined'&&window.location.pathname==='/downloader'?'downloader':'home')
  let auth = $state<'loading'|'setup'|'login'|'ready'>('loading')
  let pin = $state('')
@@ -62,10 +65,22 @@
  let updateChecking = $state(false)
  let updateBusy = $state(false)
  let updateError = $state('')
+ // Per-browser resume: the server remembers where this session stopped watching.
+ let resumeTarget = $state<ResumeState|null>(null)
+ let resumeSeekPending = $state(false)
+ let watchingTimer:ReturnType<typeof setInterval>|undefined
+ let closingTheater = false
+ // Settings → Active Sessions.
+ let sessions = $state<SessionInfo[]>([])
+ let sessionsLoading = $state(false)
+ let sessionsError = $state('')
+ let sessionsLoaded = $state(false)
+ let revokingSession = $state('')
  // Ignore the initial server version; reload only when the running binary changes.
  const versionMonitor=createVersionReloadMonitor(()=>window.location.reload())
  const navigate=(destination:'home'|'downloader'|'settings')=>{
    if(destination==='settings'||destination==='downloader')void loadSettings()
+   if(destination==='settings')void loadSessions()
    page=destination
    const path=destination==='home'?'/':destination==='settings'?'/settings':'/downloader'
    if(window.location.pathname!==path)window.history.pushState({},'',path)
@@ -77,6 +92,34 @@
    return (v/1024**rank).toFixed(rank?1:0)+' '+(rank===2?'MB':units[rank])
  }
  const percent=(m:Movie)=>Number.isFinite(m.progress)?Math.min(100,Math.max(0,m.progress)):0
+ const formatPosition=(seconds:number):string=>{
+  if(!Number.isFinite(seconds)||seconds<=0)return '0:00'
+  const total=Math.floor(seconds)
+  const hours=Math.floor(total/3600)
+  const minutes=Math.floor((total%3600)/60)
+  const secs=total%60
+  return hours?hours+':'+String(minutes).padStart(2,'0')+':'+String(secs).padStart(2,'0'):minutes+':'+String(secs).padStart(2,'0')
+ }
+ const formatDate=(unix:number):string=>{
+  if(!unix)return 'unknown'
+  try{return new Date(unix*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}catch{return 'unknown'}
+ }
+ const formatRelative=(unix:number):string=>{
+  if(!unix)return 'unknown'
+  const diff=Math.max(0,Math.floor(Date.now()/1000)-unix)
+  if(diff<60)return 'just now'
+  if(diff<3600)return Math.floor(diff/60)+'m ago'
+  if(diff<86400)return Math.floor(diff/3600)+'h ago'
+  if(diff<604800)return Math.floor(diff/86400)+'d ago'
+  return formatDate(unix)
+ }
+ // A short, human label from the raw User-Agent: "Chrome · Windows".
+ const browserLabel=(userAgent:string):string=>{
+  const value=userAgent||''
+  const browser=/Edg\//.test(value)?'Edge':/OPR\/|Opera/.test(value)?'Opera':/Firefox\//.test(value)?'Firefox':/Chrome\//.test(value)?'Chrome':/Safari\//.test(value)?'Safari':/curl\//i.test(value)?'curl':'Unknown browser'
+  const platform=/Windows/.test(value)?'Windows':/Android/.test(value)?'Android':/iPhone|iPad|iPod/.test(value)?'iOS':/Mac OS X|Macintosh/.test(value)?'macOS':/Linux/.test(value)?'Linux':''
+  return platform?browser+' · '+platform:browser
+ }
  const poster=(path:string)=>path?'https://image.tmdb.org/t/p/w500'+path:''
  const backdrop=(path:string)=>path?'https://image.tmdb.org/t/p/w1280'+path:''
  const completed = $derived(movies.filter(m=>m.status==='completed').length)
@@ -138,6 +181,94 @@
      if(selected?.hash===hash)mkvStatus={state:'error',message:(e as Error).message}
    }finally{mkvPollActive=false}
  }
+ // ---------------------------------------------------------------- resume state
+ const postWatching=async(hash:string,position:number)=>{
+  try{await call('session/watching','POST',{hash,position:Math.max(0,Number(position)||0)})}catch{}
+ }
+ const saveProgressNow=()=>{
+  const video=playerVideo
+  const movie=selected
+  if(closingTheater||!video||!movie||movie.status!=='completed')return
+  if(video.readyState<1||!Number.isFinite(video.currentTime)||video.currentTime<=0)return
+  void postWatching(movie.hash,video.currentTime)
+ }
+ const startWatchingTimer=()=>{
+  stopWatchingTimer()
+  watchingTimer=setInterval(saveProgressNow,5000)
+ }
+ const stopWatchingTimer=()=>{
+  if(watchingTimer!==undefined){clearInterval(watchingTimer);watchingTimer=undefined}
+ }
+ // Only ever seek once the element has metadata, and never to 0 or past the end.
+ const applyResumeSeek=async()=>{
+  const video=playerVideo
+  const target=resumeTarget
+  if(!resumeSeekPending||!video||!target)return
+  if(!selected||selected.hash!==target.hash||selected.status!=='completed'){resumeSeekPending=false;resumeTarget=null;return}
+  const position=Number(target.position)
+  resumeSeekPending=false
+  resumeTarget=null
+  if(!Number.isFinite(position)||position<=0)return
+  try{
+   if(video.readyState<1){
+    await new Promise<void>((resolve)=>{
+     const done=()=>{video.removeEventListener('loadedmetadata',done);resolve()}
+     video.addEventListener('loadedmetadata',done)
+     setTimeout(done,4000)
+    })
+   }
+   if(!Number.isFinite(video.duration)||video.duration<=0)return
+   if(position>=video.duration-1)return
+   video.currentTime=position
+   notify('Resumed from '+formatPosition(position))
+  }catch{}
+ }
+ const handleMetadata=()=>{
+  syncSubtitleTracks()
+  void applyResumeSeek()
+ }
+ const handlePause=()=>{if(!closingTheater)saveProgressNow()}
+ const loadResume=async()=>{
+  try{
+   const data=await call('session')
+   const resume=data?.resume
+   if(!resume||typeof resume.hash!=='string'||!resume.hash)return
+   if(selected||fileViewer)return
+   const movie=movies.find(m=>m.hash===resume.hash)
+   if(!movie||movie.status!=='completed')return
+   const position=Number(resume.position)
+   if(!Number.isFinite(position)||position<=0)return
+   const target:ResumeState={hash:resume.hash,position,title:resume.title,updatedAt:resume.updatedAt}
+   openMovie(movie,target)
+  }catch{}
+ }
+ const loadSessions=async(quiet=false)=>{
+  if(!quiet)sessionsLoading=true
+  try{
+   const data=await call('sessions')
+   sessions=Array.isArray(data?.sessions)?(data.sessions as SessionInfo[]):[]
+   sessionsLoaded=true
+   sessionsError=''
+  }catch(e){
+   sessionsError=(e as Error).message
+  }finally{
+   if(!quiet)sessionsLoading=false
+  }
+ }
+ const revokeSession=async(id:string)=>{
+  if(!id||revokingSession)return
+  revokingSession=id
+  sessionsError=''
+  try{
+   await call('sessions/'+encodeURIComponent(id),'DELETE')
+   notify('That device has been signed out.')
+   await loadSessions(true)
+  }catch(e){
+   sessionsError=(e as Error).message
+  }finally{
+   revokingSession=''
+  }
+ }
  const prepareMKV=async(movie:Movie)=>{
    const file=findPlayback(movie.files).video
    if(!file||!file.path.toLowerCase().endsWith('.mkv'))return
@@ -149,25 +280,42 @@
      if(selected?.hash===movie.hash)mkvStatus={state:'error',message:(e as Error).message}
    }
  }
- const openMovie=(movie:Movie)=>{
+ const openMovie=(movie:Movie,resume?:ResumeState|null)=>{
    playbackError=''
    playerVideo=null
    selectedSubtitle=0
    ccEnabled=false
    mkvStatus=null
+   closingTheater=false
+   resumeTarget=resume??null
+   resumeSeekPending=Boolean(resume)
    selected=movie
-   if(movie.status==='completed'&&findPlayback(movie.files).video?.path.toLowerCase().endsWith('.mkv')){
-     void prepareMKV(movie)
+   if(movie.status==='completed'){
+     startWatchingTimer()
+     if(findPlayback(movie.files).video?.path.toLowerCase().endsWith('.mkv')){
+       void prepareMKV(movie)
+     }
    }
  }
  const closeMovie=()=>{
-   playerVideo?.pause()
+   const video=playerVideo
+   const movie=selected
+   stopWatchingTimer()
+   // Clear the server-side resume point for this browser. The pause event that
+   // follows must not re-post the old position, so suppress it for this tick.
+   closingTheater=true
+   if(movie&&movie.status==='completed'){
+     void postWatching(movie.hash,0)
+   }
+   video?.pause()
    playerVideo=null
    selected=null
    mkvStatus=null
    selectedSubtitle=0
    ccEnabled=false
    playbackError=''
+   resumeTarget=null
+   resumeSeekPending=false
  }
  const closeFileViewer=()=>{
    fileViewer=null
@@ -278,7 +426,11 @@
    movies=state.movies||[]
    storage=state.storage||null
    if(state.version)version=state.version
-   if(selected)selected=movies.find(m=>m.hash===selected?.hash)||null
+   if(selected){
+     selected=movies.find(m=>m.hash===selected?.hash)||null
+     // A movie removed mid-playback unmounts the theater; stop tracking it.
+     if(!selected)stopWatchingTimer()
+   }
  }
  const connect=()=>{
    live?.close()
@@ -292,11 +444,11 @@
    try{
      const state=await call('auth/status')
      auth=state.setupRequired?'setup':state.authenticated?'ready':'login'
-     if(auth==='ready'){await refresh();connect();if(page==='settings'||page==='downloader')await loadSettings()}
+     if(auth==='ready'){await refresh();connect();if(page==='settings'||page==='downloader')await loadSettings();if(page==='settings')void loadSessions();await loadResume()}
    }catch{error='Unable to connect to Cloudflix server';auth='login'}
  }
  onMount(()=>{
-   const handleBack=()=>{page=window.location.pathname==='/settings'?'settings':window.location.pathname==='/downloader'?'downloader':'home';if(page==='settings'||page==='downloader')void loadSettings()}
+   const handleBack=()=>{page=window.location.pathname==='/settings'?'settings':window.location.pathname==='/downloader'?'downloader':'home';if(page==='settings'||page==='downloader')void loadSettings();if(page==='settings')void loadSessions()}
    // Escape dismisses the theater; the Files dialog handles this via Dialog.Root.
    const handleEscape=(event:KeyboardEvent)=>{
      if(event.key==='Escape'&&selected&&!fileViewer)closeMovie()
@@ -319,7 +471,10 @@
        if(file)void loadMKVStatus(selected.hash,file.path)
      }
    },2500)
-   return ()=>{live?.close();clearInterval(updaterPoll);clearInterval(fileInspectionPoll);clearInterval(mkvPlaybackPoll);if(noticeTimer!==undefined)clearTimeout(noticeTimer);window.removeEventListener('popstate',handleBack);window.removeEventListener('keydown',handleEscape)}
+   const sessionsPoll=setInterval(()=>{
+     if(page==='settings'&&auth==='ready')void loadSessions(true)
+   },10000)
+   return ()=>{live?.close();stopWatchingTimer();clearInterval(updaterPoll);clearInterval(fileInspectionPoll);clearInterval(mkvPlaybackPoll);clearInterval(sessionsPoll);if(noticeTimer!==undefined)clearTimeout(noticeTimer);window.removeEventListener('popstate',handleBack);window.removeEventListener('keydown',handleEscape)}
  })
  const authenticate=async()=>{
    error=''
@@ -333,6 +488,8 @@
      auth='ready'
      await refresh()
      connect()
+     if(page==='settings')void loadSessions()
+     await loadResume()
    }catch(e){
      error=(e as Error).message
      pin=''
@@ -595,6 +752,59 @@
       </div>
       <p class="settings-hint">Updates run through a restricted, root-owned systemd helper. The web app cannot run arbitrary commands.</p>
      </Card.Root>
+     <Card.Root class="settings-panel sessions-settings-panel" aria-label="Active sessions">
+      <div class="settings-panel-header">
+       <div class="settings-panel-icon"><MonitorSmartphone size={21}/></div>
+       <div class="settings-panel-intro">
+        <h2>Active Sessions</h2>
+        <p>Every browser signed in with your PIN. Sign out any device you don't recognise.</p>
+       </div>
+       {#if sessionsLoaded}
+        <span class="integration-status">{sessions.length} {sessions.length===1?'device':'devices'}</span>
+       {/if}
+      </div>
+      {#if sessionsError}
+       <p class="update-status-error" role="alert"><AlertCircle size={15}/>{sessionsError}</p>
+      {/if}
+      {#if sessionsLoading&&!sessionsLoaded}
+       <div class="sessions-empty" role="status"><Spinner class="size-5"/><p>Loading sessions…</p></div>
+      {:else if sessions.length}
+       <div class="session-list" role="list">
+        {#each sessions as session (session.id)}
+         <article class="session-item" class:current={session.current} role="listitem">
+          <div class="session-item-main">
+           <div class="session-item-heading">
+            <h3>{browserLabel(session.userAgent)}</h3>
+            {#if session.current}<Badge variant="secondary" class="session-badge">This device</Badge>{/if}
+            <span class="status-pill" class:watching={session.status==='watching'}>{session.status==='watching'?'Watching':'Idle'}</span>
+           </div>
+           <p class="session-meta">
+            <span>{session.ip||'Unknown IP'}</span>
+            <span class="session-sep" aria-hidden="true">·</span>
+            <span>Signed in {formatDate(session.createdAt)}</span>
+            <span class="session-sep" aria-hidden="true">·</span>
+            <span>Active {formatRelative(session.lastSeen)}</span>
+           </p>
+           {#if session.watching}
+            <p class="session-watching"><MonitorPlay size={13} aria-hidden="true"/><span class="session-watching-title" title={session.watching.title}>{session.watching.title}</span><span class="session-sep" aria-hidden="true">·</span><span>{formatPosition(session.watching.position)}</span></p>
+           {/if}
+          </div>
+          {#if !session.current}
+           <Button variant="outline" size="sm" class="session-revoke" disabled={revokingSession===session.id} onclick={()=>revokeSession(session.id)} aria-label={'Sign out '+browserLabel(session.userAgent)+' session'}>
+            {#if revokingSession===session.id}<Spinner class="size-4"/>{:else}<LogOut size={15}/>{/if} Sign out
+           </Button>
+          {/if}
+         </article>
+        {/each}
+       </div>
+      {:else}
+       <div class="sessions-empty" role="status">
+        <Users size={20} aria-hidden="true"/>
+        <p>No other sessions are signed in. Signing in from another browser will list it here.</p>
+       </div>
+      {/if}
+      <p class="settings-hint">Revoking a session signs that browser out immediately. Your current session stays signed in.</p>
+     </Card.Root>
      <Card.Root class="settings-panel">
       <div class="settings-panel-header">
        <div class="settings-panel-icon"><HardDrive size={21}/></div>
@@ -840,7 +1050,8 @@
         autoplay
         playsinline
         preload="metadata"
-        onloadedmetadata={syncSubtitleTracks}
+        onloadedmetadata={handleMetadata}
+        onpause={handlePause}
         poster={selected.backdrop?backdrop(selected.backdrop):selected.poster?poster(selected.poster):undefined}
         onerror={()=>playbackError='Your browser cannot decode this video. Check that FFmpeg has prepared a compatible MP4.'}
         aria-label={'Playback of '+selected.title}

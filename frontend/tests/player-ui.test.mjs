@@ -13,7 +13,7 @@ test('movie click opens integrated MP4 theater with fullscreen and captions',()=
  assert.match(footer,/src=\{sub\.src\}/)
  assert.match(component,/mediaURL\(selected\.hash,s\.path\)/)
  assert.match(footer,/onclick=\{enterFullscreen\}/)
- assert.match(component,/playerVideo\?\.pause\(\)/)
+ assert.match(component,/video\?\.pause\(\)/)
 })
 
 test('download manager displays rejected non-video torrents',()=>{
@@ -65,7 +65,7 @@ test('CC toggle reveals subtitle shortcuts and only one text track is active',()
  assert.match(footer,/\{#if ccEnabled\}[\s\S]*class="cinema-caption-languages"/)
  assert.match(footer,/role="group" aria-label="Available subtitles"/)
  assert.match(footer,/onclick=\{\(\)=>selectCaptionTrack\(i\)\}/)
- assert.match(footer,/onloadedmetadata=\{syncSubtitleTracks\}/)
+ assert.match(footer,/onloadedmetadata=\{handleMetadata\}/)
  assert.match(footer,/onload=\{syncSubtitleTracks\}/)
  assert.doesNotMatch(footer,/default=\{i===0\}/)
 })

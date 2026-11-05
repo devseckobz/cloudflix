@@ -1,84 +1,25 @@
 # 🎬 Cloudflix
 
-Self-hosted movie downloader with a modern web interface. Paste a magnet link, track downloads, and organize your movie library with TMDB posters and release dates.
+Self-hosted movie downloader for a Linux VPS: paste a magnet, track downloads, browse a TMDB-backed library, and stream in the browser.
 
-## Local development (Windows + WSL Debian)
+## Quick start
 
-Use Node.js 22 on Windows and Go 1.27.3 inside WSL Debian. The backend runs
-in Linux because MKV preparation uses `/proc/self/fd` and requires `ffmpeg`
-and `ffprobe` (Debian package `ffmpeg`).
-
-From PowerShell in the project root:
-
-```powershell
-npm.cmd ci --prefix frontend
-npm.cmd run check --prefix frontend
-npm.cmd test --prefix frontend
-npm.cmd run build --prefix frontend
-wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && go mod download && go test ./... && go vet ./... && mkdir -p tmp && go build -o tmp/cloudflix ./cmd/cloudflix'
-```
-
-Configure your own local six-digit PIN interactively (input is hidden):
-
-```powershell
-Read-Host 'Local PIN (six digits)' -MaskInput | wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && CLOUDFLIX_DATA_DIR=./tmp/local-data ./tmp/cloudflix pin set'
-```
-
-Start the backend in one terminal:
-
-```powershell
-wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && CLOUDFLIX_DATA_DIR=./tmp/local-data CLOUDFLIX_LISTEN=127.0.0.1:3000 ./tmp/cloudflix'
-```
-
-Open `http://localhost:3000` for the built app. For frontend hot reload, run
-`npm.cmd run dev --prefix frontend` in another terminal and open the Vite URL.
-Vite proxies `/api` to port 3000. Local data and binaries stay under ignored
-`tmp/`; TMDB credentials can be configured in Settings. Systemd software
-updates require an installed VPS service and are unavailable in this local setup.
-
-## VPS installation
-
-On an Ubuntu/Debian VPS with systemd (amd64 or arm64):
+Ubuntu/Debian with systemd, amd64 or arm64. Data `/var/lib/cloudflix`, config `/etc/cloudflix/cloudflix.env`, port `80/tcp`.
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/install.sh | sudo bash
 ```
 
-The installer first checks whether **TCP port 80** is free. If it's occupied, it prints the listening process/PID and exits **before installing anything**. Otherwise, it asks you to set and confirm a **6-digit access PIN**.
+The installer aborts if TCP port 80 is occupied, asks you to set a 6-digit PIN, then prints the `http://<VPS IPv4>` address to open. No domain is needed; allow inbound TCP 80, ideally only from your own IP.
 
-The installer detects your VPS IPv4 and prints the **actual `http://IP` address** to open. No domain, Caddy, or port number is needed. Your firewall or VPS provider must allow inbound TCP 80; restrict access to your own IP when possible.
+## Features
 
-> **Security:** Direct HTTP does not encrypt your PIN, session cookies or TMDB token. Avoid untrusted networks. A 6-digit PIN has limited entropy even with login rate limiting.
-
-## Watch & download
-
-Downloader shows the free space on the filesystem containing your downloads.
-After magnet metadata arrives, Cloudflix checks the remaining size of all selected
-MP4, MKV and SRT files before requesting any movie content. It reserves space for
-unfinished downloads (including paused jobs) and leaves a 64 MB safety margin.
-If the movie will not fit, or disk space cannot be read, the queue shows an error
-and does not start the download. Resume checks capacity again. Free disk space
-and capacity available for new downloads update live. Other programs can still
-consume disk space after a download starts; MKV playback conversion also needs
-additional space for its MP4 cache.
-
-Home shows movie posters, release years and TMDB genres (search and 10 movies per page). Play completed **MP4 or MKV** movies in the theater with CC and fullscreen. MKV files are prepared as browser-compatible MP4 when opened; text subtitles embedded in MKV (SRT/ASS) are available through CC. Image-based subtitles such as PGS are not currently supported.
-
-Cloudflix inspects magnet metadata **before downloading content**. Magnets without an MP4 or MKV are rejected, and only `.mp4`, `.mkv` and `.srt` files are selected. Use **Files** in the Downloader queue to inspect included filenames, including rejected torrents. Rejected file listings are temporary (memory-only). After a restart, **Files** can fetch the torrent metadata again from peers without downloading its payload. Deleting a rejected torrent clears its record and cached file list. BitTorrent pieces may contain a few bytes from neighboring files at boundaries. The Downloader has a **Copy magnet** icon next to Delete. Release binaries include private, static FFmpeg tools for MKV playback; no FFmpeg system package or manual installation is required, including when updating from the browser. MKV preparation can take time and creates converted files in `/var/lib/cloudflix/playback-cache`.
-
-## Built-in media tools
-
-Cloudflix embeds compressed `ffmpeg` and `ffprobe` executables for its release
-architecture. On first MKV playback, it verifies and extracts them beneath
-`/var/lib/cloudflix/runtime-tools`, using private permissions. This needs extra
-disk space and makes the release binary larger. Existing PINs, settings and movies
-are preserved. Older updaters work because the tools travel inside the app binary.
-
-The tools are built from pinned FFmpeg and x264 sources by
-`scripts/build-media-tools.sh`. GitHub Releases include their corresponding source
-archive, build recipe, checksums and GPL notices. Cloudflix itself remains MIT;
-the separately executed media tools carry their own licenses. Source-only local
-builds fall back to system tools unless the generated payload is present.
+- **Downloads:** metadata is fetched before any movie content; only `.mp4`, `.mkv` and `.srt` files are selected, and magnets without an MP4/MKV are rejected.
+- **Capacity:** the Downloader shows free disk space; capacity is checked before download and again on resume, reserving unfinished and paused jobs plus a 64 MB safety margin. If the movie will not fit or disk space cannot be read, the queue shows an error and starts nothing.
+- **Home and queue:** posters, release years, TMDB genres, search, 10 movies per page. Queue Files lists included filenames (memory-only; re-fetched from peers after restart) and rejected torrents never download payload; Copy magnet sits next to Delete.
+- **Theater:** MP4/MKV with CC and fullscreen. MKV is prepared as browser-compatible MP4 on open; embedded text SRT/ASS subtitles appear in CC; PGS is not supported. Converted files live in `/var/lib/cloudflix/playback-cache`.
+- **Media tools:** release binaries embed private, static `ffmpeg`/`ffprobe`, extracted to `/var/lib/cloudflix/runtime-tools` on first MKV playback; no system FFmpeg is needed. Built from pinned FFmpeg and x264 sources by `scripts/build-media-tools.sh`; releases ship their sources, recipe, checksums and GPL notices. Cloudflix is MIT; the tools keep their own licenses.
+- **TMDB:** open **Settings → TMDB Movie Metadata** to add a 32-character v3 API key or an API Read Access Token. It is verified against TMDB and stored server-side; the browser never receives it. [Get a token](https://www.themoviedb.org/settings/api).
 
 ## Update
 
@@ -86,41 +27,44 @@ builds fall back to system tools unless the generated payload is present.
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/update.sh | sudo bash
 ```
 
-Updates download GitHub Release binaries and verify their SHA-256 checksums before replacing the app. The updater preserves movies, PIN and settings, migrates legacy port-3000 installations to port 80, and rolls back the binary if startup fails.
+Verifies SHA-256 checksums, preserves movies/PIN/settings, migrates legacy port-3000 installs to port 80, and rolls back if startup fails.
 
-You can also go to **Settings → Software Updates → Check for updates → Update now** to install future releases from the browser. The first one-line update installs the restricted systemd helper needed for in-app updates; no root password or arbitrary shell access is exposed in the UI. Cloudflix briefly restarts during an update.
+The one-line install/update also installs a restricted systemd helper for **Settings → Software Updates → Check for updates → Update now**. No root password or arbitrary shell access is exposed; Cloudflix restarts briefly during an update.
 
-## Settings
-
-After signing in, open **Settings → TMDB Movie Metadata** to add, replace, or remove your **TMDB v3 API key (32 hex characters)** or **TMDB API Read Access Token**. Cloudflix verifies the token against TMDB and saves it locally. The browser never receives your saved token. [Get your token](https://www.themoviedb.org/settings/api).
-
-## Uninstall / clean reinstall
-
-**Permanent removal**, including all movies, downloads, credentials, and settings:
+## Uninstall / reset PIN
 
 ```bash
+# Permanent: stops the service and deletes app files, movies, PIN and settings (no confirmation)
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/uninstall.sh | sudo bash
-```
-
-The script stops Cloudflix and deletes its application files and data immediately, **without asking for confirmation**. Review it before running as root. To remove the application **without deleting** its data:
-
-```bash
+# Remove the app but keep data
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/uninstall.sh | sudo env CLOUDFLIX_KEEP_DATA=1 bash
-```
-
-## Reset PIN
-
-If a PIN is rejected, use this command on the VPS to replace it. It also clears the login lockout and revokes prior sessions:
-
-
-```bash
+# Replace a rejected PIN; also clears the lockout and revokes sessions
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/pin.sh | sudo bash
 ```
 
+## Local development (Windows + WSL Debian)
+
+Node.js 22 on Windows and Go 1.27.3 in WSL Debian. The backend is Linux-only: MKV preparation uses `/proc/self/fd` and needs `ffmpeg`/`ffprobe` (Debian package `ffmpeg`).
+
+```powershell
+npm.cmd ci --prefix frontend
+npm.cmd run check --prefix frontend
+npm.cmd test --prefix frontend
+npm.cmd run build --prefix frontend
+wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && go mod download && go test ./... && go vet ./... && mkdir -p tmp && go build -o tmp/cloudflix ./cmd/cloudflix'
+Read-Host 'Local PIN (six digits)' -MaskInput | wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && CLOUDFLIX_DATA_DIR=./tmp/local-data ./tmp/cloudflix pin set'
+wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && CLOUDFLIX_DATA_DIR=./tmp/local-data CLOUDFLIX_LISTEN=127.0.0.1:3000 ./tmp/cloudflix'
+```
+
+Open `http://localhost:3000`; `npm.cmd run dev --prefix frontend` proxies `/api` to port 3000. Local data stays in ignored `tmp/`; in-app systemd updates need a VPS install.
+
 ## Service
 
-`sudo systemctl status cloudflix` · `sudo journalctl -u cloudflix -n 100 --no-pager`
+| Task | Command |
+| --- | --- |
+| Status | `sudo systemctl status cloudflix` |
+| Logs | `sudo journalctl -u cloudflix -n 100 --no-pager` |
 
-App data: `/var/lib/cloudflix` · Config: `/etc/cloudflix/cloudflix.env` · Port: `80/tcp`
+> **Security:** plain HTTP does not encrypt the PIN, session cookies or TMDB token. Avoid untrusted networks; a 6-digit PIN has limited entropy even with login rate limiting.
 
 [MIT License](LICENSE) · Use only torrents you are authorized to download or share. Movie metadata from [TMDB](https://www.themoviedb.org/).

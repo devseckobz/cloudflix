@@ -36,6 +36,7 @@ type application struct {
  dataDir string
  authMu sync.Mutex
  attempts map[string][]time.Time
+ movieInfo func(hash string)(title string,completed,known bool) // test seam for the movie catalog
 }
 
 func main() {
@@ -59,11 +60,11 @@ func main() {
  "PRAGMA journal_mode=WAL",
  "PRAGMA busy_timeout=5000",
  "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY CHECK(id=1), password_hash TEXT NOT NULL)",
- "CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)",
  "CREATE TABLE IF NOT EXISTS torrents (hash TEXT PRIMARY KEY, magnet TEXT NOT NULL, paused INTEGER NOT NULL DEFAULT 0, title TEXT NOT NULL DEFAULT '', year TEXT NOT NULL DEFAULT '', poster TEXT NOT NULL DEFAULT '', backdrop TEXT NOT NULL DEFAULT '', looked_up INTEGER NOT NULL DEFAULT 0)",
  }
  for _,statement:=range statements {if _,err=db.Exec(statement);err!=nil{log.Fatal(err)}}
  if err:=ensurePINSchema(db);err!=nil{log.Fatal(err)}
+ if err:=ensureSessionsSchema(db);err!=nil{log.Fatal(err)}
  if err:=ensureSettingsSchema(db);err!=nil{log.Fatal(err)}
  tmdbKey,err:=loadTMDBKey(db,os.Getenv("TMDB_API_KEY"))
  if err!=nil{log.Fatal(err)}
@@ -79,6 +80,10 @@ func main() {
  mux.HandleFunc("POST /api/auth/login",a.login)
  mux.HandleFunc("POST /api/auth/logout",a.require(a.logout))
  mux.HandleFunc("GET /api/state",a.require(a.state))
+ mux.HandleFunc("GET /api/session",a.require(a.sessionResume))
+ mux.HandleFunc("POST /api/session/watching",a.require(a.sessionWatching))
+ mux.HandleFunc("GET /api/sessions",a.require(a.sessionList))
+ mux.HandleFunc("DELETE /api/sessions/{id}",a.require(a.sessionRevoke))
  mux.HandleFunc("GET /api/settings",a.require(a.getSettings))
  mux.HandleFunc("PUT /api/settings",a.require(a.saveSettings))
  mux.HandleFunc("GET /api/updates",a.require(a.updateInfo))
@@ -110,7 +115,9 @@ func securityHeaders(next http.Handler)http.Handler{
   w.Header().Set("X-Frame-Options","DENY")
   w.Header().Set("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://image.tmdb.org data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
   if r.Method=="POST" || r.Method=="PUT" || r.Method=="PATCH" || r.Method=="DELETE" {
-   if !strings.HasPrefix(r.Header.Get("Content-Type"),"application/json"){http.Error(w,"expected application/json",415);return}
+   // A bodyless DELETE has no JSON payload to validate; the Origin check below
+   // still applies, and browsers cannot issue a cross-site DELETE without CORS.
+   if (r.Method!="DELETE" || r.ContentLength!=0) && !strings.HasPrefix(r.Header.Get("Content-Type"),"application/json"){http.Error(w,"expected application/json",415);return}
    if origin:=r.Header.Get("Origin");origin!=""{
     if !sameOriginHost(origin,r.Host){http.Error(w,"forbidden origin",403);return}
    }
@@ -159,7 +166,11 @@ func (a *application) authenticated(r *http.Request)bool{
  sum:=hashToken(cookie.Value)
  var stored string
  if err=a.db.QueryRowContext(r.Context(),"SELECT token_hash FROM sessions WHERE token_hash=? AND expires_at>?",sum,time.Now().Unix()).Scan(&stored);err!=nil{return false}
- return subtle.ConstantTimeCompare([]byte(stored),[]byte(sum))==1
+ if subtle.ConstantTimeCompare([]byte(stored),[]byte(sum))!=1{return false}
+ // Cheap touch on every authenticated request; skipped within the same second
+ // so a burst of range requests does not queue writes behind the single connection.
+ _,_=a.db.ExecContext(r.Context(),"UPDATE sessions SET last_seen=? WHERE token_hash=? AND last_seen<?",time.Now().Unix(),sum,time.Now().Unix())
+ return true
 }
 func (a *application) require(h http.HandlerFunc)http.HandlerFunc{
  return func(w http.ResponseWriter,r *http.Request){if !pinConfigured(a.db)||!a.authenticated(r){fail(w,401,"PIN authentication required");return};h(w,r)}
@@ -205,8 +216,9 @@ func (a *application) login(w http.ResponseWriter,r *http.Request){
 }
 func (a *application) issueSession(w http.ResponseWriter,r *http.Request){
  token,err:=randomToken();if err!=nil{fail(w,500,"session error");return}
- expiration:=time.Now().Add(7*24*time.Hour)
- if _,err=a.db.Exec("INSERT INTO sessions(token_hash,expires_at) VALUES(?,?)",hashToken(token),expiration.Unix());err!=nil{fail(w,500,"session error");return}
+ now:=time.Now()
+ expiration:=now.Add(sessionLifetime)
+ if _,err=a.db.Exec("INSERT INTO sessions(token_hash,expires_at,ip,user_agent,created_at,last_seen) VALUES(?,?,?,?,?,?)",hashToken(token),expiration.Unix(),ipAddress(r),userAgent(r),now.Unix(),now.Unix());err!=nil{fail(w,500,"session error");return}
  http.SetCookie(w,&http.Cookie{Name:"cloudflix_session",Value:token,Path:"/",HttpOnly:true,Secure:secureRequest(r),SameSite:http.SameSiteStrictMode,Expires:expiration})
  respond(w,200,map[string]bool{"ok":true})
 }

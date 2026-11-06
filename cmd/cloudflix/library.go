@@ -1,10 +1,13 @@
 package main
 
 import (
+ "bufio"
  "context"
+ "crypto/sha256"
  "database/sql"
  "encoding/json"
  "fmt"
+ "io"
  "log"
  "math"
  "os"
@@ -96,15 +99,76 @@ func syncLibraryFile(path string)error{
  return file.Sync()
 }
 
-func verifyLibraryMP4(ctx context.Context,ffprobe,path,sourceDuration string)bool{
+func verifyLibraryMP4(ctx context.Context,ffprobe,path,sourceDuration string,source *os.File,copyVideo bool)bool{
  original,err:=strconv.ParseFloat(sourceDuration,64)
  if err!=nil || original<=0 || math.IsInf(original,0) || math.IsNaN(original){return false}
  file,err:=os.Open(path)
  if err!=nil{return false}
  defer file.Close()
  if fragmented,known:=mp4Layout(file);!known || fragmented{return false}
- cmd:=exec.CommandContext(ctx,ffprobe,"-v","error","-err_detect","explode","-count_frames",
-  "-show_entries","stream=codec_type,codec_name,nb_read_frames:format=duration","-of","json","-i","/proc/self/fd/3")
+ if copyVideo && verifyCopiedLibraryVideo(ctx,ffprobe,source,file,original){return true}
+ return verifyLibraryFrames(ctx,ffprobe,file,original,true)
+}
+
+// A remux must preserve every coded video packet and its decoder configuration.
+// Decode sample windows to check playback through the new container, and still
+// decode all audio because it may have been re-encoded.
+func verifyCopiedLibraryVideo(ctx context.Context,ffprobe string,source,output *os.File,duration float64)bool{
+ before,ok:=libraryVideoDigest(ctx,ffprobe,source)
+ if !ok{return false}
+ after,ok:=libraryVideoDigest(ctx,ffprobe,output)
+ if !ok || before!=after{return false}
+ intervals:="%+3"
+ if duration>9{
+  intervals=fmt.Sprintf("%%+3,%.3f%%+3,%.3f%%+3",duration/2,max(0,duration-3))
+ }
+ return verifyLibraryFrames(ctx,ffprobe,output,duration,true,"-read_intervals",intervals) &&
+  verifyLibraryFrames(ctx,ffprobe,output,duration,false,"-select_streams","a")
+}
+
+func libraryVideoDigest(ctx context.Context,ffprobe string,file *os.File)(string,bool){
+ if _,err:=file.Seek(0,io.SeekStart);err!=nil{return "",false}
+ cmd:=exec.CommandContext(ctx,ffprobe,"-v","error","-select_streams","v:0","-show_packets","-show_streams",
+  "-show_data_hash","sha256","-show_entries","packet=data_hash:stream=extradata_hash",
+  "-of","compact","-i","/proc/self/fd/3")
+ cmd.ExtraFiles=[]*os.File{file}
+ var diagnostic boundedCommandOutput
+ cmd.Stderr=&diagnostic
+ pipe,err:=cmd.StdoutPipe()
+ if err!=nil{return "",false}
+ if err:=cmd.Start();err!=nil{pipe.Close();return "",false}
+ digest:=sha256.New()
+ scanner:=bufio.NewScanner(pipe)
+ packets,configs:=0,0
+ valid:=true
+ for scanner.Scan(){
+  field,rest,_:=strings.Cut(scanner.Text(),"|")
+  if field!="packet" && field!="stream"{continue}
+  prefix:="data_hash=SHA256:"
+  if field=="stream"{prefix="extradata_hash=SHA256:"}
+  found:=false
+  for value:=range strings.SplitSeq(rest,"|"){
+   if strings.HasPrefix(value,prefix) && len(value)==len(prefix)+2*sha256.Size{
+    _,_=digest.Write([]byte(value))
+    found=true
+    break
+   }
+  }
+  if !found{valid=false;continue}
+  if field=="packet"{packets++}else{configs++}
+ }
+ scanErr:=scanner.Err()
+ if scanErr!=nil{pipe.Close()}
+ err=cmd.Wait()
+ return string(digest.Sum(nil)),err==nil && scanErr==nil && diagnostic.data.Len()==0 && valid && packets>0 && configs==1
+}
+
+func verifyLibraryFrames(ctx context.Context,ffprobe string,file *os.File,original float64,requireVideo bool,options ...string)bool{
+ if _,err:=file.Seek(0,io.SeekStart);err!=nil{return false}
+ args:=[]string{"-v","error","-err_detect","explode","-threads",strconv.Itoa(transcodeThreads()),"-count_frames"}
+ args=append(args,options...)
+ args=append(args,"-show_entries","stream=codec_type,codec_name,nb_read_frames:format=duration","-of","json","-i","/proc/self/fd/3")
+ cmd:=exec.CommandContext(ctx,ffprobe,args...)
  cmd.ExtraFiles=[]*os.File{file}
  var output,diagnostic boundedCommandOutput
  cmd.Stdout,cmd.Stderr=&output,&diagnostic
@@ -127,7 +191,7 @@ func verifyLibraryMP4(ctx context.Context,ffprobe,path,sourceDuration string)boo
   if stream.Type=="video" && stream.Codec=="h264"{video=true
   }else if stream.Type!="audio" || stream.Codec!="aac"{return false}
  }
- return video
+ return video==requireVideo
 }
 
 // Publish a durable catalog before dropping the torrent and unlinking any

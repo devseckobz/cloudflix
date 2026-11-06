@@ -588,7 +588,7 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
   a.updateMKVJob(job,"error","Converted video is unavailable or exceeds the storage limit.")
   return
  }
- if permanent && !verifyLibraryMP4(ctx,ffprobe,temporary,parsed.Format.Duration){
+ if permanent && !verifyLibraryMP4(ctx,ffprobe,temporary,parsed.Format.Duration,source,copyVideo){
   a.updateMKVJob(job,"error","Converted MP4 failed verification. The original MKV was kept.")
   return
  }

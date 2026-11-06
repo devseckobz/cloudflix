@@ -842,8 +842,13 @@ func (a *application) torrentAction(w http.ResponseWriter,r *http.Request){
  // Deleting a torrent now always removes its downloaded files too, so the
  // queue entry and the payload can never disagree. {"keepFiles":true} remains
  // available for tooling that deliberately wants the bytes left on disk.
+ //
+ // deleteFiles is accepted and ignored: it is what the browser sends for a
+ // delete, and readJSON rejects unknown fields, so declaring it is what keeps
+ // the button from failing with "invalid request" and deleting nothing.
  var req struct{
   KeepFiles bool `json:"keepFiles"`
+  DeleteFiles bool `json:"deleteFiles"`
  }
  if r.ContentLength>0{
   if !readJSON(w,r,&req){return}

@@ -1094,10 +1094,10 @@
            <Tooltip.Root>
             <Tooltip.Trigger>
              {#snippet child({ props })}
-              <button {...props} class="danger queue-icon-button" title={'Remove '+m.title+' from queue'} aria-label={'Remove '+m.title} onclick={()=>action(m,'remove')}><Trash2 size={16}/></button>
+              <button {...props} class="danger queue-icon-button" title={'Delete '+m.title+' and its files'} aria-label={'Delete '+m.title} onclick={()=>action(m,'remove')}><Trash2 size={16}/></button>
              {/snippet}
             </Tooltip.Trigger>
-            <Tooltip.Content>Remove from queue</Tooltip.Content>
+            <Tooltip.Content>Delete torrent and files</Tooltip.Content>
            </Tooltip.Root>
           </div>
          </article>

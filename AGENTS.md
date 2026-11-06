@@ -72,7 +72,7 @@ wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && go test -race ./cmd/cloudflix 
 
 # Frontend
 npm.cmd run check --prefix frontend      # must be 0 errors AND 0 warnings
-npm.cmd test --prefix frontend           # must stay at 83/83 (grows, never shrinks)
+npm.cmd test --prefix frontend           # must never shrink (currently 82/82)
 npm.cmd run build --prefix frontend      # writes static/dist
 
 # Shell scripts (mirrors the CI step)

@@ -556,13 +556,16 @@ func (e *engine) deleteTorrentFilesLocked(item *entry)error{
 
 // deletePlaybackCacheLocked drops cached transcodes of this torrent's files.
 // Without it, a re-added movie would serve a stale transcode of the old bytes.
+// Both container layouts are cached under separate keys, so both are removed.
 func (e *engine) deletePlaybackCacheLocked(item *entry){
  if e.cacheDir==""{return}
  for _,path:=range e.torrentFilesLocked(item){
   key:=mkvKey(item.hash,path)
-  _=os.Remove(filepath.Join(e.cacheDir,key+".mp4"))
-  _=os.Remove(filepath.Join(e.cacheDir,key+".json"))
-  _=os.Remove(filepath.Join(e.cacheDir,key+".part.mp4"))
+  for _,prefix:=range []string{key,key+faststartSuffix}{
+   _=os.Remove(filepath.Join(e.cacheDir,prefix+".mp4"))
+   _=os.Remove(filepath.Join(e.cacheDir,prefix+".json"))
+   _=os.Remove(filepath.Join(e.cacheDir,prefix+".part.mp4"))
+  }
  }
 }
 

@@ -49,7 +49,7 @@ func TestMKVStatusOnlyBuildsOwnedVideoAndCaptionLinks(t *testing.T){
  tracks:=[]mkvTrack{{Index:5,Language:"da",Label:"Danish"}}
  raw,_:=json.Marshal(tracks)
  if err:=os.WriteFile(filepath.Join(dir,key+".json"),raw,0600);err!=nil{t.Fatal(err)}
- status:=a.mkvStatusFor(hash,path)
+ status:=a.mkvStatusFor(hash,path,"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
  if status.State!="ready" || len(status.Subtitles)!=1 {t.Fatalf("unexpected playback status: %+v",status)}
  if !strings.HasPrefix(status.VideoURL,"/api/playback/"+hash+"/video?path="){t.Fatal("wrong video URL")}
  if !strings.Contains(status.Subtitles[0].URL,"index=5"){t.Fatal("subtitles must use recognized stream ID")}

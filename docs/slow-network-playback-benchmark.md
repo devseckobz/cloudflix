@@ -82,25 +82,64 @@ fragmented file started in 0.1 s.
 
 ---
 
-## 4. What to implement
+## 4. What was implemented
 
-The transcode path already runs through `convertMKV`, so this is a contained
-change: add `-movflags frag_keyframe+empty_moov+default_base_moof` when the
-output is produced, instead of `+faststart` alone.
+`convertMKV` now emits one of two container layouts, chosen per client and
+cached side by side:
 
-Caveats to check before shipping, stated honestly because they are **not yet
-verified**:
+| client | cache key | `-movflags` |
+|---|---|---|
+| Chromium, Firefox | `<sha256>` | `frag_keyframe+empty_moov+default_base_moof` |
+| Safari / all iOS browsers / unknown | `<sha256>.faststart` | `+faststart` |
 
-- Chrome, Firefox and Safari all support fragmented MP4, but this was only
-  measured in Chromium via ego-browser. Safari is the usual risk for fMP4
-  variants and needs a real device test.
-- Seeking in a fragmented file may be marginally slower for the *server-side*
-  case because the browser must range-fetch a `moof` first. Not measured.
-- Existing already-downloaded files keep their large index until remuxed. A
-  one-off background remux pass (2 s per movie, `-c copy`) would migrate them.
-- The `.part`/cache handling in `mkv_playback.go` keys on the file path, so
-  regenerating cached MP4s is safe, but the cache would need invalidating to
-  force the new format.
+Why an **allowlist** rather than a Safari denylist: every browser on iOS and
+iPadOS renders with WebKit whatever its brand token says, so `CriOS`, `FxiOS`
+and `EdgiOS` are Safari's engine underneath and must not get fMP4. Only an agent
+that positively claims `Chrome/`, `Chromium/` or `Firefox/…Gecko/` is fragmented;
+anything unrecognised keeps the layout it gets today. That is deliberately
+conservative — a broken player is worse than a slow start.
+
+Both layouts are keyed separately so a Safari request never waits on, or
+receives, a Chromium transcode, and the prewarm that runs when a download
+completes builds the default (fragmented) one.
+
+### Migration of already-cached files
+
+Cache entries written before this change hold a **faststart** MP4 under the
+plain key, while the plain key now means *fragmented*. The key alone therefore
+cannot describe the bytes, so `readyLayout` reads the file's top-level boxes:
+
+- a legacy faststart entry under the plain key is **moved** into the `.faststart`
+  slot, so WebKit viewers keep playing immediately;
+- the freed plain key then gets a freshly fragmented transcode for Chromium;
+- a cache file that does not parse as MP4 is trusted as-is, because re-encoding
+  a movie on every request is worse than playing a possibly-old layout.
+
+Both layouts are also removed by `deletePlaybackCacheLocked`.
+
+### Measured after implementation
+
+Real browser (ego-browser Chromium), real fragmented file, same frames as before:
+
+| property | faststart | fragmented |
+|---|---|---|
+| `video.duration` | 7200 s, finite | **7200 s, finite** |
+| `seekable` range end | 7200 s | **7200 s** |
+| mid-film seek error | 0 s | **0 s** |
+
+The metadata contract the app's resume-seek and progress bar depend on is
+unchanged (`tmp/qa2/probe-fmp4-meta.mjs`). `TestFFmpegProducesTheTwoLayouts`
+runs the real bundled ffmpeg through `convertMKV` for both keys and asserts the
+browser-facing container: the default output has `moof` boxes and a tiny `moov`,
+the Safari output has none and puts `moov` before `mdat`.
+
+### Still not verified
+
+- **Safari on a real device.** The safety argument is that Safari receives
+  byte-identical output to what it gets today, not that fMP4 works there. No
+  device was available to test.
+- Seek *latency* on a throttled link (a `moof` must be range-fetched first).
+  Seek correctness was measured above; its speed was not.
 
 ## 5. Not the answer
 

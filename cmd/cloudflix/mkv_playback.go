@@ -88,6 +88,77 @@ func mkvKey(hash,path string)string{
  h:=sha256.Sum256([]byte(hash+"\x00"+path))
  return hex.EncodeToString(h[:])
 }
+
+// prewarmClient marks a conversion that has no client at all. It is a sentinel
+// rather than an empty string because an empty user agent is a real thing (curl,
+// a stripped header) and must keep its own conservative meaning.
+const prewarmClient="cloudflix-prewarm"
+
+// clientNeedsFaststart reports whether this client must get a plain faststart
+// MP4 rather than a fragmented one.
+//
+// A fragmented MP4 keeps its sample tables in per-fragment moof boxes, so the
+// browser can start playing after a few KB instead of fetching a multi-megabyte
+// moov index. That is a large win on a slow link (measured: a 2 h movie's index
+// is 4-5 MB, and at 800 kbps the faststart file had not rendered a frame within
+// 50 s while the fragmented one started in 0.1 s). WebKit's fMP4 support is the
+// fragile case, so Safari keeps the universally-compatible layout: the same file
+// it gets today.
+//
+// Only a positively identified Chromium or Gecko gets fragmented video, because
+// a broken player is far worse than a slower start.
+func clientNeedsFaststart(userAgent string)bool{
+ if userAgent==prewarmClient{return false}
+ agent:=strings.ToLower(userAgent)
+ // Every browser on iOS and iPadOS renders with WebKit whatever brand token it
+ // carries, so CriOS, FxiOS, EdgiOS and OPiOS are Safari's engine underneath.
+ for _,webkit:=range []string{"crios","fxios","edgios","opios","iphone","ipad","ipod"}{
+  if strings.Contains(agent,webkit){return true}
+ }
+ if strings.Contains(agent,"chrome/")||strings.Contains(agent,"chromium/"){return false}
+ if strings.Contains(agent,"firefox/")&&strings.Contains(agent,"gecko/"){return false}
+ return true // Safari, an unknown agent, or no agent at all.
+}
+
+// faststartSuffix marks the cache entry that holds the unfragmented layout.
+const faststartSuffix=".faststart"
+
+// playbackKey is the cache key for a prepared video in the format this client
+// needs. Both layouts coexist so a Safari request is served without waiting for
+// a re-encode of the Chromium version.
+func playbackKey(hash,path,userAgent string)string{
+ key:=mkvKey(hash,path)
+ if clientNeedsFaststart(userAgent){return key+faststartSuffix}
+ return key
+}
+
+// playbackMovflags picks the container layout for a cache key. The faststart
+// branch is byte-for-byte what every client got before fragmented support
+// existed, so an unrecognised player keeps exactly the old file.
+func playbackMovflags(key string)string{
+ if strings.HasSuffix(key,faststartSuffix){return "+faststart"}
+ return "frag_keyframe+empty_moov+default_base_moof"
+}
+
+// mp4Layout inspects the first top-level boxes of a cached MP4 to learn how it
+// is laid out. It reports ok=false when the file cannot be read as MP4 at all,
+// in which case the caller keeps its previous behaviour instead of forcing a
+// conversion of a file it merely failed to understand.
+func mp4Layout(file *os.File) (fragmented bool,ok bool){
+ header:=make([]byte,8)
+ var offset int64
+ for offset<8<<20{ // moov, moof and mdat always sit near the front.
+  if _,err:=file.ReadAt(header,offset);err!=nil{return false,false}
+  size:=int64(header[0])<<24|int64(header[1])<<16|int64(header[2])<<8|int64(header[3])
+  switch string(header[4:8]){
+  case "moof":return true,true
+  case "moov","mdat":return false,true
+  }
+  if size<8{return false,false}
+  offset+=size
+ }
+ return false,false
+}
 func (a *application) mkvCacheDir()(string,error){
  dir:=filepath.Join(a.dataDir,"playback-cache")
  if err:=os.MkdirAll(dir,0700);err!=nil{return "",err}
@@ -130,6 +201,67 @@ func cachedMKV(dir,key string)([]mkvTrack,bool){
  if json.Unmarshal(raw,&tracks)!=nil || len(tracks)>maxMKVTracks{return nil,false}
  return tracks,true
 }
+// cachedIsFragmented reports whether the cached MP4 for key is fragmented. The
+// second result is false when the file does not parse as MP4.
+func cachedIsFragmented(dir,key string)(bool,bool){
+ file,err:=os.Open(filepath.Join(dir,key+".mp4"))
+ if err!=nil{return false,false}
+ defer file.Close()
+ return mp4Layout(file)
+}
+
+// readyLayout reports the tracks of a cached video when its bytes match the
+// layout the client needs. baseKey is the plain mkvKey, not a playbackKey: the
+// layout suffix is applied here.
+//
+// Entries written before fragmentation existed hold a faststart MP4 under the
+// plain key. Such an entry is moved into the faststart slot, so WebKit viewers
+// keep playing immediately while the plain key is freed for the fragmented file
+// Chromium is about to request. A file whose layout cannot be determined is
+// trusted as-is: it is better to play a possibly-old layout than to re-encode a
+// movie on every request.
+func readyLayout(dir,baseKey string,wantsFaststart bool)[]mkvTrack{
+ key:=baseKey
+ if wantsFaststart{key=baseKey+faststartSuffix}
+ tracks,found:=cachedMKV(dir,key)
+ if !found{
+  // A WebKit viewer may be served a legacy faststart entry that still sits
+  // under the plain key: adopt it rather than re-encode a playable movie.
+  if !wantsFaststart{return nil}
+  legacy,ok:=cachedMKV(dir,baseKey)
+  if !ok{return nil}
+  if fragmented,known:=cachedIsFragmented(dir,baseKey);known&&fragmented{return nil}
+  if !adoptLegacyFaststart(dir,baseKey,legacy){return nil}
+  if moved,ok:=cachedMKV(dir,key);ok{return moved}
+  return nil
+ }
+ if fragmented,known:=cachedIsFragmented(dir,key);known&&fragmented!=!wantsFaststart{
+  // The file under this key has the wrong layout. Adopt it as the WebKit copy
+  // if it is a legacy faststart entry, then report "not ready" for the layout
+  // actually requested.
+  if !wantsFaststart{adoptLegacyFaststart(dir,baseKey,tracks)}
+  return nil
+ }
+ return tracks
+}
+
+// adoptLegacyFaststart moves a cache entry written before fragmentation support
+// (a faststart MP4 stored under the plain key) into the faststart slot, which
+// frees the plain key to hold the fragmented layout without making a WebKit
+// viewer re-encode a movie it can already play.
+func adoptLegacyFaststart(dir,key string,tracks []mkvTrack)bool{
+ legacy:=key+faststartSuffix
+ if _,err:=os.Stat(filepath.Join(dir,legacy+".mp4"));err==nil{return false}
+ if err:=os.Rename(filepath.Join(dir,key+".mp4"),filepath.Join(dir,legacy+".mp4"));err!=nil{return false}
+ for _,track:=range tracks{
+  old:=filepath.Join(dir,key+"."+strconv.Itoa(track.Index)+".vtt")
+  _=os.Rename(old,filepath.Join(dir,legacy+"."+strconv.Itoa(track.Index)+".vtt"))
+ }
+ // The manifest goes last: a half-moved entry then reads as "not ready"
+ // instead of "ready" with subtitles missing.
+ return os.Rename(filepath.Join(dir,key+".json"),filepath.Join(dir,legacy+".json"))==nil
+}
+
 func mkvLanguage(raw string)string{
  lang:=strings.ToLower(strings.TrimSpace(raw))
  alias:=map[string]string{"eng":"en","fra":"fr","fre":"fr","spa":"es","deu":"de","ger":"de","ita":"it","jpn":"ja","kor":"ko","chi":"zh","zho":"zh","dan":"da","fin":"fi","nor":"no","swe":"sv","por":"pt"}
@@ -142,12 +274,12 @@ func mkvTrackName(raw string,index int)string{
  if name!="" && len(name)<=35 && !strings.ContainsAny(name,"\r\n\x00"){return name}
  return "Subtitle "+strconv.Itoa(index+1)
 }
-func (a *application) mkvStatusFor(hash,path string)mkvResult{
+func (a *application) mkvStatusFor(hash,path,userAgent string)mkvResult{
  result:=mkvResult{State:"idle",Subtitles:[]mkvCaption{}}
  dir,err:=a.mkvCacheDir()
  if err!=nil{return mkvResult{State:"error",Message:"Unable to access the video cache.",Subtitles:[]mkvCaption{}}}
  key:=mkvKey(hash,path)
- if tracks,ready:=cachedMKV(dir,key);ready{
+ if tracks:=readyLayout(dir,key,clientNeedsFaststart(userAgent));tracks!=nil{
   result.State="ready"
   result.VideoURL="/api/playback/"+hash+"/video?path="+url.QueryEscape(path)
   for _,track:=range tracks{
@@ -160,7 +292,7 @@ func (a *application) mkvStatusFor(hash,path string)mkvResult{
  }
  if a.playback==nil{return result}
  a.playback.mu.Lock()
- job:=a.playback.jobs[key]
+ job:=a.playback.jobs[playbackKey(hash,path,userAgent)]
  if job!=nil{
   result.State=job.state
   result.Message=job.message
@@ -173,15 +305,15 @@ func (a *application) mkvStatus(w http.ResponseWriter,r *http.Request){
  if err!=nil{fail(w,http.StatusNotFound,err.Error());return}
  file.Close()
  w.Header().Set("Cache-Control","no-store")
- respond(w,http.StatusOK,a.mkvStatusFor(r.PathValue("hash"),r.URL.Query().Get("path")))
+ respond(w,http.StatusOK,a.mkvStatusFor(r.PathValue("hash"),r.URL.Query().Get("path"),r.UserAgent()))
 }
 // startPrepare validates a source and queues its conversion, returning the
 // status to report. It is shared by the HTTP handler and the background
 // prewarm that runs when a download completes.
-func (a *application) startPrepare(hash,path string)(mkvResult,error){
+func (a *application) startPrepare(hash,path,userAgent string)(mkvResult,error){
  source,err:=a.validatedMKVSource(hash,path)
  if err!=nil{return mkvResult{},err}
- if status:=a.mkvStatusFor(hash,path);status.State=="ready"{
+ if status:=a.mkvStatusFor(hash,path,userAgent);status.State=="ready"{
   source.Close()
   return status,nil
  }
@@ -197,14 +329,14 @@ func (a *application) startPrepare(hash,path string)(mkvResult,error){
   source.Close()
   return mkvResult{},errors.New("MKV transcoder is unavailable")
  }
- key:=mkvKey(hash,path)
+ key:=playbackKey(hash,path,userAgent)
  m:=a.playback
  m.mu.Lock()
  if existing:=m.jobs[key];existing!=nil{
   if existing.state!="error"{
    m.mu.Unlock()
    source.Close()
-   return a.mkvStatusFor(hash,path),nil
+   return a.mkvStatusFor(hash,path,userAgent),nil
   }
   delete(m.jobs,key) // Permit a new attempt after a recoverable failure.
  }
@@ -217,7 +349,7 @@ func (a *application) startPrepare(hash,path string)(mkvResult,error){
  m.jobs[key]=job
  m.mu.Unlock()
  go a.convertMKV(source,hash,path,key,job)
- return a.mkvStatusFor(hash,path),nil
+ return a.mkvStatusFor(hash,path,userAgent),nil
 }
 
 // prepareInBackground is the engine's completion hook: it converts a finished
@@ -225,7 +357,9 @@ func (a *application) startPrepare(hash,path string)(mkvResult,error){
 // soon as the download ends. Failures are deliberately silent — a movie that
 // cannot be prepared will still report its state when the user opens it.
 func (a *application) prepareInBackground(hash,path string){
- if _,err:=a.startPrepare(hash,path);err!=nil{
+ // Prewarm has no client, so it builds the default (fragmented) layout that
+ // every non-WebKit browser uses. A Safari request builds its own on demand.
+ if _,err:=a.startPrepare(hash,path,prewarmClient);err!=nil{
   log.Printf("Playback prewarm skipped for %s: %v",hash,err)
  }
 }
@@ -233,7 +367,7 @@ func (a *application) prepareInBackground(hash,path string){
 func (a *application) mkvPrepare(w http.ResponseWriter,r *http.Request){
  var request struct {Path string `json:"path"`}
  if !readJSON(w,r,&request){return}
- status,err:=a.startPrepare(r.PathValue("hash"),request.Path)
+ status,err:=a.startPrepare(r.PathValue("hash"),request.Path,r.UserAgent())
  if err!=nil{
   if strings.Contains(err.Error(),"Too many playback conversions"){
    fail(w,http.StatusTooManyRequests,err.Error())
@@ -349,7 +483,7 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
  if copyAudio{args=append(args,"-c:a","copy")}else{
   args=append(args,"-c:a","aac","-b:a","160k")
  }
- args=append(args,"-movflags","+faststart","-fs",strconv.FormatInt(maxConvertedMP4,10),temporary)
+ args=append(args,"-movflags",playbackMovflags(key),"-fs",strconv.FormatInt(maxConvertedMP4,10),temporary)
  if _,err:=commandFromMKV(ctx,ffmpeg,source,args...);err!=nil{
   a.updateMKVJob(job,"error","MKV conversion failed. Check available disk space and whether the movie file is valid.")
   return
@@ -403,9 +537,9 @@ func (a *application) serveMKVCache(w http.ResponseWriter,r *http.Request,subtit
  source,err:=a.validatedMKVSource(hash,path)
  if err!=nil{fail(w,http.StatusNotFound,"movie is unavailable");return}
  source.Close()
- status:=a.mkvStatusFor(hash,path)
+ status:=a.mkvStatusFor(hash,path,r.UserAgent())
  if status.State!="ready"{fail(w,http.StatusNotFound,"movie is still being prepared");return}
- key:=mkvKey(hash,path)
+ key:=playbackKey(hash,path,r.UserAgent())
  filename:=key+".mp4"
  contentType:="video/mp4"
  if subtitle{

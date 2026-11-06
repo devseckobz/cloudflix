@@ -28,7 +28,7 @@
  import {browserLabel,clientDetail,describeSession} from './lib/user-agent.js'
  import { Film, House, Download, Search, Pause, Play, Trash2, HardDrive, HardDriveDownload, Database, Settings, LogOut, Plus, X, CheckCircle2, Shield, Clapperboard, AlertCircle, Star, ChevronLeft, ChevronRight, Maximize2, MonitorPlay, MonitorSmartphone, Users, RefreshCw, ArrowUpCircle, Files, Copy } from '@lucide/svelte'
 
- type Movie = {hash:string,title:string,year:string,genre:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,error?:string,files:{path:string,size:number,completed?:number}[]}
+ type Movie = {hash:string,title:string,year:string,genre:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,converted?:boolean,error?:string,files:{path:string,size:number,completed?:number}[]}
  type InspectedFile = {path:string,size:number,selected:boolean}
  type FileInspection = {available:boolean,fetching?:boolean,files:InspectedFile[],total:number,truncated?:boolean,rejected:boolean,reason:string,message?:string}
  type MKVStatus = {state:string,message?:string,videoURL?:string,subtitles?:{index:number,language:string,label:string,url:string}[]}
@@ -186,7 +186,8 @@
      const data=await call('playback/'+encodeURIComponent(hash)+'/status?path='+encodeURIComponent(path))
      if(selected?.hash===hash && findPlayback(selected.files).video?.path===path)mkvStatus=data as MKVStatus
    }catch(e){
-     if(selected?.hash===hash)mkvStatus={state:'error',message:(e as Error).message}
+     if(selected?.hash===hash)await refresh()
+     if(selected?.hash===hash && findPlayback(selected.files).video?.path===path)mkvStatus={state:'error',message:(e as Error).message}
    }finally{mkvPollActive=false}
  }
  // ---------------------------------------------------------------- resume state
@@ -481,7 +482,7 @@
  // The SSE snapshot arrives every 2s as freshly parsed JSON. Replacing the
  // array unconditionally would invalidate every {#each} block and repaint the
  // whole library while a movie is playing, so compare a cheap signature first.
- const movieSignature=(list:Movie[])=>list.map(m=>m.hash+'|'+m.status+'|'+m.progress+'|'+m.completed+'|'+m.title+'|'+m.year+'|'+m.genre+'|'+m.rating+'|'+m.size+'|'+(m.error||'')).join('\n')
+ const movieSignature=(list:Movie[])=>list.map(m=>m.hash+'|'+m.status+'|'+m.progress+'|'+m.completed+'|'+m.title+'|'+m.year+'|'+m.genre+'|'+m.rating+'|'+m.size+'|'+(m.error||'')+'|'+Boolean(m.converted)).join('\n')
  const setState=(state:{movies:Movie[],version?:string,storage?:Storage})=>{
    // SSE also covers terminal-based updates and all pages, not just Settings.
    if(state.version && versionMonitor.observe(state.version))return
@@ -493,6 +494,10 @@
    stateLoaded=true
    if(selected){
      const current=movies.find(m=>m.hash===selected?.hash)||null
+     if(current?.converted && !selected.converted && playerVideo && playerVideo.currentTime>0){
+       resumeTarget={hash:current.hash,position:playerVideo.currentTime}
+       resumeSeekPending=true
+     }
      if(current!==selected)selected=current
      // A movie removed mid-playback unmounts the theater; stop tracking it.
      if(!selected)stopWatchingTimer()

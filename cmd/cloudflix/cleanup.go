@@ -67,6 +67,10 @@ func (p *cleanupPreview) add(file leftoverFile){
 // .txt is never ours to delete.
 func reclaimableMediaName(path string)bool{
  name:=strings.TrimSuffix(path,partSuffix)
+ switch strings.ToLower(filepath.Base(name)){
+ case "yifystatus.com.txt","ytsyifyup... (tor).txt":
+  return true
+ }
  switch strings.ToLower(filepath.Ext(name)){
  case ".mp4",".mkv",".srt",".avi",".m4v",".webm",".mov",".flv",".wmv",
   ".nfo",".jpg",".jpeg",".png",".sub",".idx",".ass",".ssa",".vtt":
@@ -106,15 +110,23 @@ func (e *engine) scanLeftovers()(cleanupPreview,error){
  if err!=nil{return cleanupPreview{},err}
  preview,err:=e.walkLeftovers(expected,nil)
  if err!=nil{return preview,err}
- err=e.walkPlaybackLeftovers(keys,&preview,false)
+ legacy:=keys
+ if e.libraryDir!=""{legacy=nil}
+ err=e.walkPlaybackLeftovers(legacy,&preview,false)
+ if err==nil{err=e.walkCacheDirectory(e.libraryDir,"library",keys,&preview,false)}
  return preview,err
 }
 
 func (e *engine) expectedPlaybackKeysLocked()map[string]bool{
  keys:=make(map[string]bool)
- if e.cacheDir==""{return keys}
+ if e.cacheDir=="" && e.libraryDir==""{return keys}
  for _,item:=range e.entries{
   if item==nil{continue}
+  if item.library!=nil{
+   for _,file:=range item.library.Files{
+    if file.Stored!=""{keys[strings.SplitN(file.Stored,".",2)[0]]=true}
+   }
+  }
   for _,path:=range e.torrentAllFilesLocked(item){
    if strings.EqualFold(filepath.Ext(path),".mkv"){keys[mkvKey(item.hash,path)]=true}
   }
@@ -132,8 +144,12 @@ func (e *engine) expectedPlaybackKeysLocked()map[string]bool{
 // Older releases could remove the queue entry while leaving generated playback
 // files outside downloads. Match only filenames Cloudflix can generate.
 func (e *engine) walkPlaybackLeftovers(keys map[string]bool,preview *cleanupPreview,remove bool)error{
- if e.cacheDir==""{return nil}
- root,err:=os.OpenRoot(e.cacheDir)
+ return e.walkCacheDirectory(e.cacheDir,"playback-cache",keys,preview,remove)
+}
+
+func (e *engine) walkCacheDirectory(dir,label string,keys map[string]bool,preview *cleanupPreview,remove bool)error{
+ if dir==""{return nil}
+ root,err:=os.OpenRoot(dir)
  if errors.Is(err,os.ErrNotExist){return nil}
  if err!=nil{return err}
  defer root.Close()
@@ -154,7 +170,7 @@ func (e *engine) walkPlaybackLeftovers(keys map[string]bool,preview *cleanupPrev
    if firstErr==nil{firstErr=err}
    continue
   }
-  preview.add(leftoverFile{Path:"playback-cache/"+entry.Name(),Size:info.Size()})
+  preview.add(leftoverFile{Path:label+"/"+entry.Name(),Size:info.Size()})
  }
  return firstErr
 }
@@ -225,8 +241,12 @@ func (e *engine) removeLeftovers()(cleanupPreview,error){
  sort.Slice(ordered,func(i,j int)bool{return len(ordered[i])>len(ordered[j])})
  for _,dir:=range ordered{_=root.Remove(dir)}
 
- cacheErr:=e.walkPlaybackLeftovers(e.expectedPlaybackKeysLocked(),&preview,true)
- return preview,errors.Join(walkErr,firstErr,cacheErr)
+ keys:=e.expectedPlaybackKeysLocked()
+ legacy:=keys
+ if e.libraryDir!=""{legacy=nil}
+ cacheErr:=e.walkPlaybackLeftovers(legacy,&preview,true)
+ libraryErr:=e.walkCacheDirectory(e.libraryDir,"library",keys,&preview,true)
+ return preview,errors.Join(walkErr,firstErr,cacheErr,libraryErr)
 }
 
 // storageLeftovers reports reclaimable files without deleting anything.

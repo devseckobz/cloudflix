@@ -51,6 +51,8 @@ type mkvResult struct {
 type mkvJob struct {
  state string
  message string
+ ctx context.Context
+ cancel context.CancelFunc
 }
 type mkvManager struct {
  mu sync.Mutex
@@ -67,7 +69,10 @@ type ffStream struct{
   Title string `json:"title"`
  } `json:"tags"`
 }
-type ffProbe struct{ Streams []ffStream `json:"streams"` }
+type ffProbe struct{
+ Streams []ffStream `json:"streams"`
+ Format struct{Duration string `json:"duration"`} `json:"format"`
+}
 var validCaptionLang=regexp.MustCompile("^[a-z]{2,3}(-[a-z]{2})?$")
 
 func newMKVManager()*mkvManager{
@@ -166,6 +171,19 @@ func (a *application) mkvCacheDir()(string,error){
  stat,err:=os.Lstat(dir)
  if err!=nil || !stat.IsDir() || stat.Mode()&os.ModeSymlink!=0{return "",errors.New("unsafe playback cache directory")}
  return dir,nil
+}
+
+func (a *application) permanentPlayback()bool{return a.engine!=nil && a.engine.libraryDir!=""}
+
+func (a *application) playbackOutputDir()(string,error){
+ if !a.permanentPlayback(){return a.mkvCacheDir()}
+ dir:=a.engine.libraryDir
+ return dir,os.MkdirAll(dir,0700)
+}
+
+func (a *application) outputKey(hash,path,userAgent string)string{
+ if a.permanentPlayback(){return mkvKey(hash,path)}
+ return playbackKey(hash,path,userAgent)
 }
 func (a *application) validatedMKVSource(hash,path string)(*os.File,error){
  if !mediaHashPattern.MatchString(hash) || !allowedMediaPath(path) ||
@@ -277,10 +295,20 @@ func mkvTrackName(raw string,index int)string{
 }
 func (a *application) mkvStatusFor(hash,path,userAgent string)mkvResult{
  result:=mkvResult{State:"idle",Subtitles:[]mkvCaption{}}
- dir,err:=a.mkvCacheDir()
+ dir,err:=a.playbackOutputDir()
  if err!=nil{return mkvResult{State:"error",Message:"Unable to access the video cache.",Subtitles:[]mkvCaption{}}}
  key:=mkvKey(hash,path)
- if tracks:=readyLayout(dir,key,clientNeedsFaststart(userAgent));tracks!=nil{
+ var tracks []mkvTrack
+ if a.permanentPlayback(){
+  prepared,ok:=readPreparedLibrary(dir,key)
+  info,err:=os.Lstat(filepath.Join(a.engine.downloads,filepath.FromSlash(path)))
+  if ok && prepared.Source.Path==path && err==nil && prepared.Source.matches(info){
+   if prepared.hasOutputs(dir,key){
+    tracks=prepared.Tracks
+   }
+  }
+ }else{tracks=readyLayout(dir,key,clientNeedsFaststart(userAgent))}
+ if tracks!=nil{
   result.State="ready"
   result.VideoURL="/api/playback/"+hash+"/video?path="+url.QueryEscape(path)
   for _,track:=range tracks{
@@ -293,8 +321,8 @@ func (a *application) mkvStatusFor(hash,path,userAgent string)mkvResult{
  }
  if a.playback==nil{return result}
  a.playback.mu.Lock()
- job:=a.playback.jobs[playbackKey(hash,path,userAgent)]
- if job!=nil{
+ job:=a.playback.jobs[a.outputKey(hash,path,userAgent)]
+ if job!=nil && job.state!="ready"{
   result.State=job.state
   result.Message=job.message
  }
@@ -330,23 +358,38 @@ func (a *application) startPrepare(hash,path,userAgent string)(mkvResult,error){
   source.Close()
   return mkvResult{},errors.New("MKV transcoder is unavailable")
  }
- key:=playbackKey(hash,path,userAgent)
+ key:=a.outputKey(hash,path,userAgent)
  m:=a.playback
+ if a.permanentPlayback(){
+  e:=a.engine
+  e.mu.Lock()
+  defer e.mu.Unlock()
+  item:=e.entries[hash]
+  info,err:=source.Stat()
+  current,currentErr:=os.Lstat(filepath.Join(e.downloads,filepath.FromSlash(path)))
+  if item==nil || item.torrent==nil || err!=nil || currentErr!=nil || !os.SameFile(info,current){
+   source.Close()
+   return mkvResult{},errors.New("The source MKV is no longer queued.")
+  }
+ }
  m.mu.Lock()
  if existing:=m.jobs[key];existing!=nil{
-  if existing.state!="error"{
+  if existing.state=="queued" || existing.state=="processing"{
    m.mu.Unlock()
    source.Close()
    return a.mkvStatusFor(hash,path,userAgent),nil
   }
   delete(m.jobs,key) // Permit a new attempt after a recoverable failure.
  }
- if len(m.jobs)>=32{
+ active:=0
+ for _,job:=range m.jobs{if job.state=="queued" || job.state=="processing"{active++}}
+ if active>=32{
   m.mu.Unlock()
   source.Close()
   return mkvResult{},errors.New("Too many playback conversions. Try later.")
  }
- job:=&mkvJob{state:"queued",message:"Waiting to prepare your MKV for browser playback"}
+ ctx,cancel:=context.WithCancel(context.Background())
+ job:=&mkvJob{state:"queued",message:"Waiting to prepare your MKV for browser playback",ctx:ctx,cancel:cancel}
  m.jobs[key]=job
  m.mu.Unlock()
  go a.convertMKV(source,hash,path,key,job)
@@ -358,8 +401,7 @@ func (a *application) startPrepare(hash,path,userAgent string)(mkvResult,error){
 // soon as the download ends. Failures are deliberately silent — a movie that
 // cannot be prepared will still report its state when the user opens it.
 func (a *application) prepareInBackground(hash,path string){
- // Prewarm has no client, so it builds the default (fragmented) layout that
- // every non-WebKit browser uses. A Safari request builds its own on demand.
+ // Production prepares the same permanent MP4 for every browser.
  if _,err:=a.startPrepare(hash,path,prewarmClient);err!=nil{
   log.Printf("Playback prewarm skipped for %s: %v",hash,err)
  }
@@ -439,27 +481,58 @@ func remuxCachedLayout(ctx context.Context,ffmpeg,dir,key,output string)bool{
 func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJob){
  defer source.Close()
  m:=a.playback
+ jobCtx:=job.ctx
+ if jobCtx==nil{jobCtx=context.Background()}
+ if job.cancel!=nil{defer job.cancel()}
  select{
  case m.slot<-struct{}{}:
   defer func(){<-m.slot}()
  case <-time.After(10*time.Minute):
   a.updateMKVJob(job,"error","The conversion queue is busy. Please try again.")
   return
+ case <-jobCtx.Done():
+  a.updateMKVJob(job,"error","Playback preparation was cancelled.")
+  return
  }
  a.updateMKVJob(job,"processing","Preparing a browser-compatible MP4. Large movies may take some time.")
- ctx,cancel:=context.WithTimeout(context.Background(),3*time.Hour)
+ ctx,cancel:=context.WithTimeout(jobCtx,3*time.Hour)
  defer cancel()
  ffmpeg,err:=mediatools.Resolve(a.dataDir,"ffmpeg")
  if err!=nil{a.updateMKVJob(job,"error","Built-in video conversion is unavailable. Check storage and update Cloudflix.");return}
  ffprobe,err:=mediatools.Resolve(a.dataDir,"ffprobe")
  if err!=nil{a.updateMKVJob(job,"error","Built-in video inspection is unavailable. Check storage and update Cloudflix.");return}
- dir,err:=a.mkvCacheDir()
+ dir,err:=a.playbackOutputDir()
  if err!=nil{a.updateMKVJob(job,"error","Playback cache is unavailable.");return}
  output:=filepath.Join(dir,key+".mp4")
  temporary:=filepath.Join(dir,key+".part.mp4")
  defer os.Remove(temporary)
+ permanent:=a.permanentPlayback()
+ limit:=maxConvertedMP4
+ var unpublished []string
+ published:=false
+ var original libraryOriginal
+ if permanent{
+  info,err:=source.Stat()
+  if err!=nil{a.updateMKVJob(job,"error","Unable to inspect the source MKV.");return}
+  original=libraryOriginal{Path:path,Size:info.Size(),Modified:info.ModTime().UnixNano()}
+  defer func(){
+   if !published{for _,path:=range unpublished{_ = os.Remove(path)}}
+  }()
+  // These older layouts can be regenerated from the still-verified source.
+  // Reclaim them before requiring space for the new permanent MP4.
+  a.engine.mu.Lock()
+  if item:=a.engine.entries[hash];item!=nil{a.engine.deletePlaybackCacheLocked(item,[]string{path})}
+  a.engine.mu.Unlock()
+  storage:=a.engine.storage()
+  _,free,err:=filesystemSpace(dir)
+  if !storage.Known || err!=nil || min(storage.Available,free)<16<<20{
+   a.updateMKVJob(job,"error","Not enough space to convert this MKV. The original was kept.")
+   return
+  }
+  limit=int64(min(uint64(limit),min(storage.Available,free)-(8<<20)))
+ }
  probeBytes,err:=commandFromMKV(ctx,ffprobe,source,
-  "-v","error","-show_entries","stream=index,codec_type,codec_name,pix_fmt:stream_tags=language,title",
+  "-v","error","-show_entries","stream=index,codec_type,codec_name,pix_fmt:stream_tags=language,title:format=duration",
   "-of","json","-i","/proc/self/fd/3")
  if err!=nil{
   a.updateMKVJob(job,"error","Unable to read the MKV container. Check the file's format.")
@@ -501,42 +574,85 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
  if copyAudio{args=append(args,"-c:a","copy")}else{
   args=append(args,"-c:a","aac","-b:a","160k")
  }
- args=append(args,"-movflags",playbackMovflags(key),"-fs",strconv.FormatInt(maxConvertedMP4,10),temporary)
- if !remuxCachedLayout(ctx,ffmpeg,dir,key,temporary){
+ flags:=playbackMovflags(key)
+ if permanent{flags="+faststart";args=append([]string{"-xerror"},args...)}
+ args=append(args,"-movflags",flags,"-fs",strconv.FormatInt(limit,10),temporary)
+ if permanent || !remuxCachedLayout(ctx,ffmpeg,dir,key,temporary){
   if _,err:=commandFromMKV(ctx,ffmpeg,source,args...);err!=nil{
    a.updateMKVJob(job,"error","MKV conversion failed. Check available disk space and whether the movie file is valid.")
    return
   }
  }
  converted,err:=os.Stat(temporary)
- if err!=nil||!converted.Mode().IsRegular()||converted.Size()==0||converted.Size()>maxConvertedMP4{
+ if err!=nil||!converted.Mode().IsRegular()||converted.Size()==0||converted.Size()>=limit{
   a.updateMKVJob(job,"error","Converted video is unavailable or exceeds the storage limit.")
+  return
+ }
+ if permanent && !verifyLibraryMP4(ctx,ffprobe,temporary,parsed.Format.Duration){
+  a.updateMKVJob(job,"error","Converted MP4 failed verification. The original MKV was kept.")
   return
  }
  tracks:=make([]mkvTrack,0)
  for _,stream:=range parsed.Streams{
-  if stream.CodecType!="subtitle"||len(tracks)>=maxMKVTracks{continue}
+  if stream.CodecType!="subtitle"{continue}
   switch strings.ToLower(stream.CodecName){
   case "subrip","ass","ssa","webvtt","mov_text","text":
   default:continue // Image-based PGS/DVD subtitles cannot become WebVTT text.
   }
   index:=stream.Index
-  if index<0||index>200{continue}
+  if len(tracks)>=maxMKVTracks || index<0||index>200{
+   if permanent{a.updateMKVJob(job,"error","Too many subtitle tracks to preserve. The original MKV was kept.");return}
+   continue
+  }
   filename:=filepath.Join(dir,key+"."+strconv.Itoa(index)+".vtt")
   temp:=filename+".part"
   _,err:=commandFromMKV(ctx,ffmpeg,source,"-nostdin","-hide_banner","-loglevel","error",
    "-y","-i","/proc/self/fd/3","-map","0:"+strconv.Itoa(index),"-c:s","webvtt","-f","webvtt",temp)
-  if err!=nil{os.Remove(temp);continue}
+  if err!=nil{
+   os.Remove(temp)
+   if permanent{a.updateMKVJob(job,"error","Subtitle extraction failed. The original MKV was kept.");return}
+   continue
+  }
   stat,err:=os.Stat(temp)
-  if err!=nil||stat.Size()>maxSubtitleOutput||stat.Size()==0{os.Remove(temp);continue}
-  if err:=os.Rename(temp,filename);err!=nil{os.Remove(temp);continue}
+  if err==nil && (stat.Size()>maxSubtitleOutput||stat.Size()==0){err=errors.New("invalid subtitle size")}
+  if err==nil && permanent{err=syncLibraryFile(temp)}
+  if err==nil{err=os.Rename(temp,filename)}
+  if err!=nil{
+   os.Remove(temp)
+   if permanent{a.updateMKVJob(job,"error","Unable to save a subtitle. The original MKV was kept.");return}
+   continue
+  }
   tracks=append(tracks,mkvTrack{Index:index,Language:mkvLanguage(stream.Tags.Language),Label:mkvTrackName(stream.Tags.Title,len(tracks))})
+  if permanent{unpublished=append(unpublished,filename)}
+ }
+ if permanent && syncLibraryFile(temporary)!=nil{
+  a.updateMKVJob(job,"error","Unable to sync the converted MP4. The original MKV was kept.");return
+ }
+ publishingLocked:=false
+ if permanent{
+  a.engine.mu.Lock()
+  publishingLocked=true
+  defer func(){if publishingLocked{a.engine.mu.Unlock()}}()
+  if item:=a.engine.entries[hash];ctx.Err()!=nil || item==nil || item.torrent==nil{
+   a.updateMKVJob(job,"error","Playback preparation was cancelled.")
+   return
+  }
  }
  if err:=os.Rename(temporary,output);err!=nil{
   a.updateMKVJob(job,"error","Unable to store converted MKV playback.")
   return
  }
- metadata,err:=json.Marshal(tracks)
+ if permanent{unpublished=append(unpublished,output)}
+ var record any=tracks
+ if permanent{
+  info,err:=source.Stat()
+  if err!=nil || !original.matches(info) || ctx.Err()!=nil{
+   a.updateMKVJob(job,"error","The source MKV changed or preparation was cancelled.")
+   return
+  }
+  record=preparedLibraryFile{Source:original,Tracks:tracks}
+ }
+ metadata,err:=json.Marshal(record)
  if err!=nil{a.updateMKVJob(job,"error","Unable to save subtitle information.");return}
  manifest:=filepath.Join(dir,key+".json")
  tempManifest:=manifest+".part"
@@ -544,12 +660,27 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
   a.updateMKVJob(job,"error","Unable to save conversion metadata.")
   return
  }
+ if permanent && syncLibraryFile(tempManifest)!=nil{
+  _=os.Remove(tempManifest)
+  a.updateMKVJob(job,"error","Unable to sync the conversion metadata.");return
+ }
  if err:=os.Rename(tempManifest,manifest);err!=nil{
   os.Remove(tempManifest)
   a.updateMKVJob(job,"error","Unable to complete playback preparation.")
   return
  }
+ published=true
+ if publishingLocked{
+  a.engine.mu.Unlock()
+  publishingLocked=false
+ }
  a.updateMKVJob(job,"ready","")
+ if permanent{
+  m.mu.Lock()
+  if m.jobs[key]==job{delete(m.jobs,key)}
+  m.mu.Unlock()
+  a.engine.finalizeLibrary()
+ }
 }
 func (a *application) serveMKVCache(w http.ResponseWriter,r *http.Request,subtitle bool){
  hash:=r.PathValue("hash")
@@ -559,7 +690,7 @@ func (a *application) serveMKVCache(w http.ResponseWriter,r *http.Request,subtit
  source.Close()
  status:=a.mkvStatusFor(hash,path,r.UserAgent())
  if status.State!="ready"{fail(w,http.StatusNotFound,"movie is still being prepared");return}
- key:=playbackKey(hash,path,r.UserAgent())
+ key:=a.outputKey(hash,path,r.UserAgent())
  filename:=key+".mp4"
  contentType:="video/mp4"
  if subtitle{
@@ -571,7 +702,7 @@ func (a *application) serveMKVCache(w http.ResponseWriter,r *http.Request,subtit
   filename=key+"."+strconv.Itoa(index)+".vtt"
   contentType="text/vtt; charset=utf-8"
  }
- dir,err:=a.mkvCacheDir()
+ dir,err:=a.playbackOutputDir()
  if err!=nil{fail(w,http.StatusInternalServerError,"playback unavailable");return}
  root,err:=os.OpenRoot(dir)
  if err!=nil{fail(w,http.StatusInternalServerError,"playback unavailable");return}

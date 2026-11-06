@@ -106,7 +106,7 @@ func (e *engine) awaitRejectedFileMetadata(item *entry,tt *torrent.Torrent,cance
 
 // torrentFiles returns a transient view of torrent metainfo. Rejected entries
 // left over from an earlier process are inspected again when Files is clicked.
-// No filenames or payload content are written to the application database.
+// Raw torrent metadata is transient. The permanent library has its own file list.
 func (a *application) torrentFiles(w http.ResponseWriter,r *http.Request){
  hash:=r.PathValue("hash")
  if !mediaHashPattern.MatchString(hash){
@@ -134,7 +134,12 @@ func (a *application) torrentFiles(w http.ResponseWriter,r *http.Request){
  fetching:=item.inspectingFiles || (reason=="" && item.fileManifest==nil)
  message:=item.fileInspectionError
  var manifest *torrentFileManifest
- if item.fileManifest!=nil{
+ if item.library!=nil{
+  manifest=&torrentFileManifest{Total:len(item.library.Files)}
+  for _,file:=range item.library.Files{
+   manifest.Files=append(manifest.Files,manifestFile{Path:file.Path,Size:file.Size,Selected:true})
+  }
+ }else if item.fileManifest!=nil{
   snapshot:=*item.fileManifest
   snapshot.Files=append([]manifestFile(nil),snapshot.Files...)
   manifest=&snapshot

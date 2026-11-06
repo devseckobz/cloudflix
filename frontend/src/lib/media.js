@@ -45,9 +45,9 @@ export function findPlayback(files){
  const base=video.path.replace(/\.(mp4|mkv)$/i,'')
  const videoFile=base.split('/').pop()||base
  const videoDir=base.slice(0,base.length-videoFile.length)
- const subtitles=files.filter(f=>/\.srt$/i.test(f.path)&&f.size>0)
+ const subtitles=files.filter(f=>/\.(srt|vtt)$/i.test(f.path)&&f.size>0)
    .map(f=>{
-     const stem=f.path.replace(/\.srt$/i,'')
+     const stem=f.path.replace(/\.(srt|vtt)$/i,'')
      const file=stem.split('/').pop()||stem
      const directory=stem.slice(0,stem.length-file.length)
      const exact=stem.toLowerCase()===base.toLowerCase()

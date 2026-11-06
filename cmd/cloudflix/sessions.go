@@ -125,6 +125,7 @@ func (e *engine) movieState(hash string)(string,bool,bool){
  item:=e.entries[hash]
  if item==nil || item.rejectionReason!=""{return "",false,false}
  title:=item.title
+ if item.library!=nil{return title,true,true}
  tt:=item.torrent
  if tt==nil || tt.Info()==nil{return title,false,true}
  if title==""{title=tt.Name()}

@@ -55,6 +55,7 @@ type entry struct {
  // that finished is prepared once rather than on every tick.
  prewarmed map[string]bool
  fileManifest *torrentFileManifest // transient torrent metadata; never stored in SQLite
+ library *libraryMovie
  inspectingFiles bool
  inspectedFilesOnce bool
  fileInspectionError string
@@ -66,6 +67,7 @@ type engine struct{
  db *sql.DB
  downloads string
  cacheDir string // playback-cache directory; empty disables cache cleanup
+ libraryDir string
  playback *mkvManager
  tmdbKey string
  entries map[string]*entry
@@ -336,6 +338,7 @@ func addMagnetMetadataOnly(client *torrent.Client,magnet string)(*torrent.Torren
 func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  if err:=ensureMovieRatingSchema(db);err!=nil{return nil,err}
  if err:=ensureMediaSchema(db);err!=nil{return nil,err}
+ if err:=ensureLibrarySchema(db);err!=nil{return nil,err}
  if err:=ensureMovieGenreSchema(db);err!=nil{return nil,err}
  if err:=purgeLegacyFileManifests(db);err!=nil{return nil,err}
  config:=torrent.NewDefaultClientConfig()
@@ -353,16 +356,22 @@ func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
  }
  client,err:=torrent.NewClient(config)
  if err!=nil{return nil,err}
- e:=&engine{client:client,db:db,downloads:downloads,cacheDir:filepath.Join(filepath.Dir(downloads),"playback-cache"),tmdbKey:key,entries:make(map[string]*entry)}
+ e:=&engine{client:client,db:db,downloads:downloads,cacheDir:filepath.Join(filepath.Dir(downloads),"playback-cache"),libraryDir:filepath.Join(filepath.Dir(downloads),"library"),tmdbKey:key,entries:make(map[string]*entry)}
  if key!=""{_,_=db.Exec("UPDATE torrents SET looked_up=0 WHERE (poster='' OR rating=0) AND looked_up=1")}
- rows,err:=db.Query("SELECT rowid,hash,magnet,paused,title,year,genre,poster,backdrop,rating,looked_up,rejection_reason FROM torrents ORDER BY rowid ASC")
+ rows,err:=db.Query("SELECT rowid,hash,magnet,paused,title,year,genre,poster,backdrop,rating,looked_up,rejection_reason,library FROM torrents ORDER BY rowid ASC")
  if err!=nil{client.Close();return nil,err}
  defer rows.Close()
  for rows.Next(){
   var item entry
   var paused,lookedUp int
-  if err:=rows.Scan(&item.queuePosition,&item.hash,&item.magnet,&paused,&item.title,&item.year,&item.genre,&item.poster,&item.backdrop,&item.rating,&lookedUp,&item.rejectionReason);err!=nil{client.Close();return nil,err}
+  var library string
+  if err:=rows.Scan(&item.queuePosition,&item.hash,&item.magnet,&paused,&item.title,&item.year,&item.genre,&item.poster,&item.backdrop,&item.rating,&lookedUp,&item.rejectionReason,&library);err!=nil{client.Close();return nil,err}
   item.paused=paused!=0;item.lookedUp=lookedUp!=0
+  if library!=""{
+   if err:=json.Unmarshal([]byte(library),&item.library);err!=nil || item.library==nil{client.Close();return nil,fmt.Errorf("invalid library record for %s",item.hash)}
+   e.entries[item.hash]=&item
+   continue
+  }
   if item.rejectionReason!="" {
    e.entries[item.hash]=&item
    continue
@@ -372,16 +381,18 @@ func newEngine(downloads string,db *sql.DB,key string)(*engine,error){
   item.hash=tt.InfoHash().HexString()
   item.torrent=tt
   e.entries[item.hash]=&item
-  e.startWhenReady(&item)
  }
+ if err:=rows.Err();err!=nil{client.Close();return nil,err}
+ if err:=rows.Close();err!=nil{client.Close();return nil,err}
+ for _,item:=range e.entries{if item.torrent!=nil{e.startWhenReady(item)}}
  return e,nil
 }
 func (e *engine) close(){e.client.Close()}
 // Request metadata first and select only MP4, MKV and SRT payload files.
 func (e *engine) startWhenReady(item *entry){
+ tt:=item.torrent
+ if tt==nil{return}
  go func(){
-  tt:=item.torrent
-  if tt==nil{return}
   select{
   case <-tt.GotInfo():
   case <-time.After(10*time.Minute):
@@ -505,6 +516,7 @@ func (e *engine) torrentFilesLocked(item *entry)[]string{
 // leaving those behind is what made a deleted movie's folder survive with
 // nothing in it the scanner recognised. Paths are still validated for safety.
 func (e *engine) torrentAllFilesLocked(item *entry)[]string{
+ if item.library!=nil{return item.library.Owned}
  var paths []string
  if item.torrent!=nil && item.torrent.Info()!=nil{
   for _,file:=range item.torrent.Files(){
@@ -629,6 +641,7 @@ func (e *engine) action(hash,action string,deleteFiles bool)error{
   // holds .nfo/.jpg/.txt sidecars, and deleting only the movie left an orphan
   // directory no UI surface could see or reclaim.
   ownedAll:=e.torrentAllFilesLocked(item)
+  e.cancelPlaybackLocked(item,ownedAll)
   ownedFiles:=make([]string,0,len(ownedAll))
   for _,path:=range ownedAll{
    if allowedMediaPath(path){ownedFiles=append(ownedFiles,path)}
@@ -644,7 +657,7 @@ func (e *engine) action(hash,action string,deleteFiles bool)error{
   // the inspected manifest, never from the request. All declared files are
   // removed so sidecars cannot strand an otherwise-empty release folder.
   if deleteFiles && item.rejectionReason==""{
-   if err:=e.deleteTorrentFilesLocked(item,ownedAll);err!=nil{
+   if err:=errors.Join(e.deleteTorrentFilesLocked(item,ownedAll),e.removeLibraryFilesLocked(item,ownedAll));err!=nil{
     // The queue row is already gone; report the file error rather than
     // pretending the delete was complete.
     item.fileManifest=nil
@@ -694,6 +707,13 @@ func (e *engine) snapshot()[]map[string]any{
   files:=make([]map[string]any,0)
   if item.rejectionReason!=""{
    status="rejected"
+  }else if item.library!=nil{
+   status="completed"
+   for _,file:=range item.library.Files{
+    size+=file.Size
+    files=append(files,map[string]any{"path":file.Path,"size":file.Size,"completed":file.Size})
+   }
+   completed=size
   }else if item.torrent!=nil {
    tt:=item.torrent
    if item.title=="" && tt.Name()!=""{name=tt.Name()}
@@ -714,6 +734,7 @@ func (e *engine) snapshot()[]map[string]any{
   movies=append(movies,map[string]any{
    "hash":item.hash,"title":name,"year":item.year,"genre":item.genre,"poster":item.poster,
    "backdrop":item.backdrop,"rating":item.rating,"size":size,"completed":completed,
+   "converted":item.library!=nil,
    "progress":progress,"status":status,"files":files,"error":item.rejectionReason,
   })
  }
@@ -733,10 +754,19 @@ func identify(raw string)(string,string){
  return title,year
 }
 func (e *engine) run(ctx context.Context){
+ go e.runMetadata(ctx)
+ ticker:=time.NewTicker(10*time.Second);defer ticker.Stop()
+ for{
+  e.finalizeLibrary()
+  e.prewarmCompleted(ctx)
+  select{case <-ctx.Done():return;case <-ticker.C:}
+ }
+}
+
+func (e *engine) runMetadata(ctx context.Context){
  ticker:=time.NewTicker(10*time.Second);defer ticker.Stop()
  for{
   e.refreshMetadata(ctx)
-  e.prewarmCompleted(ctx)
   select{case <-ctx.Done():return;case <-ticker.C:}
  }
 }
@@ -750,6 +780,17 @@ func (e *engine) completedMKVFilesLocked()map[string][]string{
   if item==nil || item.rejectionReason!="" || !item.validated || item.torrent==nil{continue}
   tt:=item.torrent
   if tt.Info()==nil{continue}
+  if e.libraryDir!=""{
+   if item.paused{continue}
+   complete:=tt.Complete().Bool()
+   for _,file:=range tt.Files(){
+    path:=filepath.ToSlash(file.Path())
+    if item.prewarmed[path] || !allowedMediaPath(path) || !strings.EqualFold(filepath.Ext(path),".mkv"){continue}
+    if !complete && !item.verifiedFiles[path] && file.BytesCompleted()<file.Length(){continue}
+    if e.fileVerifiedLocked(item,tt,path){finished[hash]=append(finished[hash],path)}
+   }
+   continue
+  }
   size,completed,_:=selectedFileStats(tt)
   if size<=0 || !e.completedLocked(item,tt,size,completed){continue}
   for _,path:=range e.torrentFilesLocked(item){
@@ -759,10 +800,7 @@ func (e *engine) completedMKVFilesLocked()map[string][]string{
  return finished
 }
 
-// prewarmCompleted converts finished MKVs in the background so the movie is
-// ready to play the moment the user clicks Watch. Previously the transcode only
-// started on that click, so a feature-length movie meant staring at "Preparing
-// MKV for playback" for 20+ minutes after the download had already completed.
+// Start converting verified MKVs without waiting for a Watch request.
 func (e *engine) prewarmCompleted(ctx context.Context){
  if e.prewarm==nil{return}
  files:=e.finishedMKVs()
@@ -780,14 +818,21 @@ type finishedMKV struct{hash,path string}
 func (e *engine) finishedMKVs()[]finishedMKV{
  e.mu.Lock()
  defer e.mu.Unlock()
+ if e.libraryDir!="" && e.playback!=nil{
+  e.playback.mu.Lock()
+  busy:=false
+  for _,job:=range e.playback.jobs{
+   if job.state=="queued" || job.state=="processing"{busy=true;break}
+  }
+  e.playback.mu.Unlock()
+  if busy{return nil}
+ }
  pending:=make([]finishedMKV,0)
  for hash,paths:=range e.completedMKVFilesLocked(){
   item:=e.entries[hash]
   if item==nil{continue}
   for _,path:=range paths{
    if item.prewarmed[path]{continue}
-   if item.prewarmed==nil{item.prewarmed=make(map[string]bool,2)}
-   item.prewarmed[path]=true
    pending=append(pending,finishedMKV{hash:hash,path:path})
   }
  }
@@ -795,6 +840,12 @@ func (e *engine) finishedMKVs()[]finishedMKV{
   if pending[i].hash!=pending[j].hash{return pending[i].hash<pending[j].hash}
   return pending[i].path<pending[j].path
  })
+ if e.libraryDir!="" && len(pending)>1{pending=pending[:1]}
+ for _,target:=range pending{
+  item:=e.entries[target.hash]
+  if item.prewarmed==nil{item.prewarmed=make(map[string]bool,2)}
+  item.prewarmed[target.path]=true
+ }
  return pending
 }
 func (e *engine) refreshMetadata(ctx context.Context){
@@ -803,8 +854,12 @@ func (e *engine) refreshMetadata(ctx context.Context){
  e.mu.Lock()
  key:=e.tmdbKey
  for _,item:=range e.entries{
-  if item.lookedUp || item.rejectionReason!="" || item.torrent==nil || item.torrent.Info()==nil || time.Now().Before(item.retryAt){continue}
-  title,year:=identify(item.torrent.Name())
+  if item.lookedUp || item.rejectionReason!="" || time.Now().Before(item.retryAt){continue}
+  title,year:=item.title,item.year
+  if item.library==nil{
+   if item.torrent==nil || item.torrent.Info()==nil{continue}
+   title,year=identify(item.torrent.Name())
+  }
   if title==""{continue}
   item.title=title;item.year=year
   _,_=e.db.Exec("UPDATE torrents SET title=?,year=? WHERE hash=?",title,year,item.hash)
@@ -908,21 +963,27 @@ func (a *application) downloadFile(w http.ResponseWriter,r *http.Request){
  e.mu.Lock()
  item:=e.entries[hash]
  valid:=false
- if item!=nil && item.validated && item.torrent!=nil && item.torrent.Info()!=nil{
+ dir,name:=e.downloads,wanted
+ if item!=nil && item.library!=nil{
+  if file,ok:=item.library.file(wanted);ok{
+   valid=true
+   if file.Stored!=""{dir,name=e.libraryDir,file.Stored}
+  }
+ }else if item!=nil && item.validated && item.torrent!=nil && item.torrent.Info()!=nil{
   for _,file:=range item.torrent.Files(){
    if filepath.ToSlash(file.Path())==wanted && allowedMediaPath(wanted) && verifiedFile(file){valid=true;break}
   }
  }
  e.mu.Unlock()
  if !valid || !filepath.IsLocal(filepath.FromSlash(wanted)){fail(w,404,"file not found");return}
- root,err:=os.OpenRoot(e.downloads)
+ root,err:=os.OpenRoot(dir)
  if err!=nil{fail(w,500,"storage unavailable");return}
  defer root.Close()
- f,err:=root.Open(filepath.FromSlash(wanted))
+ f,err:=root.Open(filepath.FromSlash(name))
  if err!=nil{fail(w,404,"file not found");return}
  defer f.Close()
  info,err:=f.Stat()
  if err!=nil || !info.Mode().IsRegular(){fail(w,404,"file not found");return}
  w.Header().Set("Content-Disposition","attachment")
- http.ServeContent(w,r,info.Name(),info.ModTime(),f)
+ http.ServeContent(w,r,filepath.Base(wanted),info.ModTime(),f)
 }

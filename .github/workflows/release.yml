@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'New release tag (for example v0.1.43)'
+        description: 'New release tag (for example v0.1.44)'
         required: true
 permissions:
   contents: write
@@ -57,7 +57,7 @@ jobs:
           elif [[ "$REF_TYPE" == "tag" ]];then
             TAG="$REF_NAME"
           else
-            TAG="v0.1.43"
+            TAG="v0.1.44"
           fi
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][a-zA-Z0-9.]+)?$ ]]
           echo "TAG=$TAG" >> "$GITHUB_ENV"
@@ -91,7 +91,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp tmp/media-amd64/payload/* internal/mediatools/payload/
-          go test ./internal/mediatools ./cmd/cloudflix -run 'TestBundled|TestFFmpegProducesTheTwoLayouts|TestRemuxCachedLayout' -count=1
+          go test ./internal/mediatools ./cmd/cloudflix -run 'TestBundled|TestFFmpegProducesTheTwoLayouts|TestRemuxCachedLayout|TestPermanentMKV' -count=1
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$TAG" -o cloudflix ./cmd/cloudflix
           tar -czf dist/cloudflix-linux-amd64.tar.gz cloudflix
           (cd dist && sha256sum cloudflix-linux-amd64.tar.gz > cloudflix-linux-amd64.tar.gz.sha256)

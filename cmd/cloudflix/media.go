@@ -23,7 +23,7 @@ func mediaKind(name string) (contentType string, subtitle bool) {
  switch strings.ToLower(filepath.Ext(name)) {
  case ".mp4":
   return "video/mp4", false
- case ".srt":
+ case ".srt",".vtt":
   return "text/vtt; charset=utf-8", true
  default:
   return "", false
@@ -64,7 +64,7 @@ func serveVideoBody(w http.ResponseWriter,r *http.Request,name string,size int64
 // unable to escape the downloads directory through traversal or symlinks.
 func serveMediaFile(w http.ResponseWriter, r *http.Request, root *os.Root, name string) {
  local:=filepath.FromSlash(name)
- if !allowedMediaPath(name) || !filepath.IsLocal(local) || filepath.ToSlash(local)!=name {
+ if (!allowedMediaPath(name) && !strings.EqualFold(filepath.Ext(name),".vtt")) || !safeTorrentPath(name) || !filepath.IsLocal(local) || filepath.ToSlash(local)!=name {
   fail(w,http.StatusNotFound,"media file not found")
   return
  }
@@ -116,7 +116,13 @@ func (a *application) streamMedia(w http.ResponseWriter,r *http.Request) {
  e.mu.Lock()
  item:=e.entries[hash]
  valid:=false
- if item!=nil && item.validated && item.rejectionReason=="" && item.torrent!=nil && item.torrent.Info()!=nil {
+ dir,name:=e.downloads,requested
+ if item!=nil && item.library!=nil{
+  if file,ok:=item.library.file(requested);ok{
+   valid=true
+   if file.Stored!=""{dir,name=e.libraryDir,file.Stored}
+  }
+ }else if item!=nil && item.validated && item.rejectionReason=="" && item.torrent!=nil && item.torrent.Info()!=nil {
   // Memoized per file: the piece walk used to run on every authenticated
   // range request while holding the engine mutex, stalling concurrent seeks.
   valid=e.fileVerifiedLocked(item,item.torrent,requested)
@@ -126,12 +132,12 @@ func (a *application) streamMedia(w http.ResponseWriter,r *http.Request) {
   fail(w,http.StatusNotFound,"media unavailable until the download completes")
   return
  }
- root,err:=os.OpenRoot(e.downloads)
+ root,err:=os.OpenRoot(dir)
  if err!=nil {
   fail(w,http.StatusInternalServerError,"storage unavailable")
   return
  }
  defer root.Close()
- serveMediaFile(w,r,root,requested)
+ serveMediaFile(w,r,root,name)
 }
 

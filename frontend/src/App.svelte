@@ -368,10 +368,15 @@
      else (video as HTMLVideoElement & {webkitEnterFullscreen?:()=>void}).webkitEnterFullscreen?.()
    }catch{playbackError='Fullscreen is unavailable in this browser. You can also use the video controls.'}
  }
+ let updateCheckGeneration=0
  const loadUpdateInfo=async(quiet=false)=>{
+   if(updateChecking)return
+   if(!quiet)updateCheckGeneration++
+   const generation=updateCheckGeneration
    if(!quiet)updateChecking=true
    try{
-     const data=await call('updates')
+     const data=await call(quiet?'updates':'updates?refresh=1')
+     if(generation!==updateCheckGeneration)return
      // Settings polling detects a newly installed version even if SSE is offline.
      if(versionMonitor.observe(data.currentVersion))return
      updateInfo=data as UpdateInfo
@@ -429,7 +434,7 @@
    const total=formatBytes(leftoverBytes)
    const ok=await confirmDialog({
      title:'Delete '+leftoverCount+' unused '+(leftoverCount===1?'file':'files')+'?',
-     description:'These files are in the downloads folder but no longer belong to any download in your queue. Deleting them frees '+total+' and cannot be undone.',
+     description:'These downloads and playback cache files no longer belong to any download in your queue. Deleting them frees '+total+' and cannot be undone.',
      confirmLabel:'Delete '+total,
      destructive:true,
    })
@@ -1029,7 +1034,7 @@
              than hidden, so it cannot silently disappear. -->
         <Button variant="outline" size="sm" class="cleanup-button" onclick={()=>void cleanUp()} disabled={cleanupBusy||leftoverCount===0}
           title={leftoverCount>0
-            ?leftoverCount+' '+(leftoverCount===1?'file':'files')+' in the downloads folder no longer belong to any download in your queue.'
+            ?leftoverCount+' '+(leftoverCount===1?'file':'files')+' no longer belong to any download in your queue.'
             :'No leftover files detected. The Downloader checks periodically.'}
           aria-label={leftoverCount>0
             ?'Clean up '+leftoverCount+' unused '+(leftoverCount===1?'file':'files')+', freeing '+formatBytes(leftoverBytes)

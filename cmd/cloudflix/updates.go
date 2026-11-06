@@ -25,9 +25,10 @@ const (
 var githubLatestRelease = "https://api.github.com/repos/devseckobz/cloudflix/releases/latest"
 
 const (
- // A successful check is reused for two minutes: the Settings page polls
- // every 4.5s, so this keeps us far below GitHub's 60 requests/hour.
- releaseSuccessTTL = 2*time.Minute
+ // Automatic checks share one cache per server. At most 48 checks/hour
+ // leaves room for manual refreshes in GitHub's unauthenticated budget.
+ releaseSuccessTTL = 75*time.Second
+ releaseManualCooldown = 5*time.Second
  // The first failure is retried quickly, then the delay doubles. Retrying a
  // failure every 25s would issue 144 requests/hour and keep the IP rate
  // limited forever, which is exactly how a real update goes undetected.
@@ -48,6 +49,8 @@ var releaseCache struct{
  tag string
  err error
  expires time.Time
+ manualAfter time.Time
+ quotaReset time.Time
  // Consecutive failures drive the backoff, and the last good tag is kept so a
  // transient GitHub failure never erases an update we already detected.
  failures int
@@ -74,26 +77,38 @@ func newerVersion(current,latest string) bool {
 // successfully read is returned alongside the error so callers can keep
 // showing a known update while GitHub is unreachable or rate limited.
 func latestRelease(ctx context.Context)(string,error){
+ return checkLatestRelease(ctx,false)
+}
+
+func checkLatestRelease(ctx context.Context,manual bool)(string,error){
  releaseCache.Lock()
  defer releaseCache.Unlock()
- if time.Now().Before(releaseCache.expires) {
+ now:=time.Now()
+ if now.Before(releaseCache.quotaReset) && releaseCache.err==nil{
+  if manual{return releaseCache.tag,errors.New("GitHub's request quota is low. Checks will resume when it resets.")}
+  return releaseCache.tag,nil
+ }
+ if now.Before(releaseCache.expires) && (!manual || releaseCache.err!=nil || now.Before(releaseCache.manualAfter)){
   return releaseCache.tag,releaseCache.err
  }
  tag,retryAfter,err:=fetchLatestRelease(ctx)
+ now=time.Now()
+ if manual{releaseCache.manualAfter=now.Add(releaseManualCooldown)}
  if err!=nil{
   releaseCache.failures++
   // Keep the last good tag so a transient failure does not erase a detected
   // update. The error is still reported so the UI can explain the check.
   releaseCache.tag=releaseCache.lastGood
   releaseCache.err=errors.New("Unable to check GitHub Releases right now")
-  releaseCache.expires=time.Now().Add(releaseRetryDelay(releaseCache.failures,retryAfter))
+  releaseCache.expires=now.Add(releaseRetryDelay(releaseCache.failures,retryAfter))
   return releaseCache.tag,releaseCache.err
  }
  releaseCache.failures=0
  releaseCache.tag=tag
  releaseCache.lastGood=tag
  releaseCache.err=nil
- releaseCache.expires=time.Now().Add(releaseSuccessTTL)
+ releaseCache.expires=now.Add(releaseSuccessTTL)
+ releaseCache.quotaReset=now.Add(retryAfter)
  return tag,nil
 }
 
@@ -102,16 +117,12 @@ func latestRelease(ctx context.Context)(string,error){
 // failure every 25s (144 requests/hour against a 60/hour limit) and the IP
 // stays rate limited, so a real release is never detected.
 func releaseRetryDelay(failures int,retryAfter time.Duration)time.Duration{
- if retryAfter>0{
-  if retryAfter>releaseMaxErrorTTL{return releaseMaxErrorTTL}
-  return retryAfter
- }
  delay:=releaseErrorTTL
  for i:=1;i<failures && delay<releaseMaxErrorTTL;i++{
   delay*=2
  }
  if delay>releaseMaxErrorTTL{delay=releaseMaxErrorTTL}
- return delay
+ return max(delay,retryAfter)
 }
 
 // fetchLatestRelease performs one GitHub request. It returns the tag, any
@@ -131,7 +142,11 @@ func fetchLatestRelease(ctx context.Context)(string,time.Duration,error){
  if err!=nil{return "",0,err}
  defer res.Body.Close()
  if res.StatusCode!=http.StatusOK{
-  return "",retryAfterDelay(res.Header),errors.New("GitHub Releases is temporarily unavailable")
+  delay:=retryAfterDelay(res.Header)
+  if delay==0 && (res.StatusCode==http.StatusForbidden || res.StatusCode==http.StatusTooManyRequests){
+   delay=time.Minute
+  }
+  return "",delay,errors.New("GitHub Releases is temporarily unavailable")
  }
  var release struct{
   TagName string `json:"tag_name"`
@@ -144,25 +159,24 @@ func fetchLatestRelease(ctx context.Context)(string,time.Duration,error){
  if release.Draft || release.Prerelease || !stableVersion.MatchString(release.TagName){
   return "",0,errors.New("no stable Cloudflix release found")
  }
- return release.TagName,0,nil
+ return release.TagName,retryAfterDelay(res.Header),nil
 }
 
-// retryAfterDelay honours Retry-After and GitHub's rate-limit reset header so
-// a rate-limited instance waits exactly as long as GitHub asks.
+// Keep the longer of Retry-After and the quota reset. Reserve the last
+// reported request for other GitHub activity on the VPS.
 func retryAfterDelay(header http.Header)time.Duration{
+ var delay time.Duration
  if value:=strings.TrimSpace(header.Get("Retry-After"));value!=""{
   if seconds,err:=strconv.Atoi(value);err==nil && seconds>0{
-   return time.Duration(seconds)*time.Second
+   delay=time.Duration(seconds)*time.Second
   }
  }
- if value:=strings.TrimSpace(header.Get("X-RateLimit-Remaining"));value=="0"{
+ if value:=strings.TrimSpace(header.Get("X-RateLimit-Remaining"));value=="0" || value=="1"{
   if reset,err:=strconv.ParseInt(strings.TrimSpace(header.Get("X-RateLimit-Reset")),10,64);err==nil{
-   if delay:=time.Until(time.Unix(reset,0));delay>0{
-    return delay
-   }
+   delay=max(delay,time.Until(time.Unix(reset,0)))
   }
  }
- return 0
+ return delay
 }
 
 func updateServiceInstalled()bool{
@@ -194,9 +208,10 @@ func (a *application) updateRequestPath()string{
 }
 
 func (a *application) updateInfo(w http.ResponseWriter,r *http.Request){
+ w.Header().Set("Cache-Control","no-store")
  s:=readUpdateStatus()
  if _,err:=os.Lstat(a.updateRequestPath());err==nil{s=updateStatus{State:"queued",Message:"Waiting for the system updater"}}
- tag,err:=latestRelease(r.Context())
+ tag,err:=checkLatestRelease(r.Context(),r.URL.Query().Get("refresh")=="1")
  // A failed check must not hide an update we already know about. latestRelease
  // returns the last good tag alongside the error, so keep reporting it and let
  // checkError explain that the check itself could not be refreshed.

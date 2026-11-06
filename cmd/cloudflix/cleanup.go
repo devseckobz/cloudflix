@@ -6,6 +6,7 @@ import (
  "net/http"
  "os"
  "path/filepath"
+ "regexp"
  "sort"
  "strings"
 )
@@ -38,6 +39,18 @@ type cleanupPreview struct {
 // maxLeftoverFiles bounds the preview so a directory full of junk cannot build
 // an unbounded response. The delete pass still walks everything.
 const maxLeftoverFiles = 500
+
+var playbackArtifact = regexp.MustCompile(`^([0-9a-f]{64})(?:\.faststart)?\.(?:mp4|part\.mp4|json(?:\.part)?|[0-9]{1,3}\.vtt(?:\.part)?)$`)
+
+func (p *cleanupPreview) add(file leftoverFile){
+ p.Count++
+ p.Bytes+=file.Size
+ if len(p.Files)<maxLeftoverFiles{
+  p.Files=append(p.Files,file)
+ }else{
+  p.Truncated=true
+ }
+}
 
 // reclaimableMediaName reports whether a path looks like something Cloudflix
 // itself could have downloaded. Only these are ever considered garbage: a
@@ -88,9 +101,62 @@ func (e *engine) expectedFilesLocked()(map[string]bool,error){
 func (e *engine) scanLeftovers()(cleanupPreview,error){
  e.mu.Lock()
  expected,err:=e.expectedFilesLocked()
+ keys:=e.expectedPlaybackKeysLocked()
  e.mu.Unlock()
  if err!=nil{return cleanupPreview{},err}
- return e.walkLeftovers(expected,nil)
+ preview,err:=e.walkLeftovers(expected,nil)
+ if err!=nil{return preview,err}
+ err=e.walkPlaybackLeftovers(keys,&preview,false)
+ return preview,err
+}
+
+func (e *engine) expectedPlaybackKeysLocked()map[string]bool{
+ keys:=make(map[string]bool)
+ if e.cacheDir==""{return keys}
+ for _,item:=range e.entries{
+  if item==nil{continue}
+  for _,path:=range e.torrentAllFilesLocked(item){
+   if strings.EqualFold(filepath.Ext(path),".mkv"){keys[mkvKey(item.hash,path)]=true}
+  }
+ }
+ if e.playback!=nil{
+  e.playback.mu.Lock()
+  defer e.playback.mu.Unlock()
+  for key,job:=range e.playback.jobs{
+   if job.state=="queued" || job.state=="processing"{keys[strings.TrimSuffix(key,faststartSuffix)]=true}
+  }
+ }
+ return keys
+}
+
+// Older releases could remove the queue entry while leaving generated playback
+// files outside downloads. Match only filenames Cloudflix can generate.
+func (e *engine) walkPlaybackLeftovers(keys map[string]bool,preview *cleanupPreview,remove bool)error{
+ if e.cacheDir==""{return nil}
+ root,err:=os.OpenRoot(e.cacheDir)
+ if errors.Is(err,os.ErrNotExist){return nil}
+ if err!=nil{return err}
+ defer root.Close()
+ entries,err:=fs.ReadDir(root.FS(),".")
+ if err!=nil{return err}
+ var firstErr error
+ for _,entry:=range entries{
+  if !entry.Type().IsRegular(){continue}
+  match:=playbackArtifact.FindStringSubmatch(entry.Name())
+  if match==nil{continue}
+  preview.Scanned++
+  if keys[match[1]]{continue}
+  info,err:=entry.Info()
+  if errors.Is(err,os.ErrNotExist){continue}
+  if err==nil && remove{err=root.Remove(entry.Name())}
+  if errors.Is(err,os.ErrNotExist){continue}
+  if err!=nil{
+   if firstErr==nil{firstErr=err}
+   continue
+  }
+  preview.add(leftoverFile{Path:"playback-cache/"+entry.Name(),Size:info.Size()})
+ }
+ return firstErr
 }
 
 // visit can remove a candidate. Only candidates it accepts are counted.
@@ -117,13 +183,7 @@ func (e *engine) walkLeftovers(expected map[string]bool,visit func(leftoverFile)
   if info,statErr:=d.Info();statErr==nil{size=info.Size()}
   file:=leftoverFile{Path:path,Size:size}
   if visit!=nil && !visit(file){return nil}
-  preview.Count++
-  preview.Bytes+=size
-  if len(preview.Files)<maxLeftoverFiles{
-   preview.Files=append(preview.Files,file)
-  }else{
-   preview.Truncated=true
-  }
+  preview.add(file)
   return nil
  })
  if walkErr!=nil{return cleanupPreview{},walkErr}
@@ -165,7 +225,8 @@ func (e *engine) removeLeftovers()(cleanupPreview,error){
  sort.Slice(ordered,func(i,j int)bool{return len(ordered[i])>len(ordered[j])})
  for _,dir:=range ordered{_=root.Remove(dir)}
 
- return preview,errors.Join(walkErr,firstErr)
+ cacheErr:=e.walkPlaybackLeftovers(e.expectedPlaybackKeysLocked(),&preview,true)
+ return preview,errors.Join(walkErr,firstErr,cacheErr)
 }
 
 // storageLeftovers reports reclaimable files without deleting anything.

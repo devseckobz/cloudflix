@@ -66,6 +66,7 @@ type engine struct{
  db *sql.DB
  downloads string
  cacheDir string // playback-cache directory; empty disables cache cleanup
+ playback *mkvManager
  tmdbKey string
  entries map[string]*entry
  activeFileInspections int

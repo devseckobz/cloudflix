@@ -19,6 +19,8 @@ func resetReleaseCache(t *testing.T){
  releaseCache.tag=""
  releaseCache.err=nil
  releaseCache.expires=time.Time{}
+ releaseCache.manualAfter=time.Time{}
+ releaseCache.quotaReset=time.Time{}
  releaseCache.failures=0
  releaseCache.lastGood=""
  releaseCache.Unlock()
@@ -211,12 +213,12 @@ func TestReleaseRetryDelayGrowsAndIsCapped(t *testing.T){
  if got:=releaseRetryDelay(100,0);got!=releaseMaxErrorTTL{
   t.Fatalf("delay should cap at %v, got %v",releaseMaxErrorTTL,got)
  }
- // A server-provided Retry-After wins, and is still capped.
+ // GitHub's Retry-After can extend the local exponential backoff.
  if got:=releaseRetryDelay(1,90*time.Second);got!=90*time.Second{
   t.Fatalf("Retry-After should be honoured, got %v",got)
  }
- if got:=releaseRetryDelay(1,time.Hour);got!=releaseMaxErrorTTL{
-  t.Fatalf("Retry-After should be capped at %v, got %v",releaseMaxErrorTTL,got)
+ if got:=releaseRetryDelay(1,time.Hour);got!=time.Hour{
+  t.Fatalf("Retry-After should wait the full hour, got %v",got)
  }
 }
 

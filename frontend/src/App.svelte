@@ -507,7 +507,10 @@
    try{
      const state=await call('auth/status')
      auth=state.setupRequired?'setup':state.authenticated?'ready':'login'
-     if(auth==='ready'){await refresh();connect();if(page==='settings'||page==='downloader')await loadSettings();if(page==='settings')void loadSessions();await loadResume()}
+     if(auth==='ready'){await refresh();connect();if(page==='settings'||page==='downloader')await loadSettings();if(page==='settings')void loadSessions();await loadResume();
+      // A direct load or reload of /downloader never goes through navigate(), so
+      // without this the leftover scan never runs and Clean up stays disabled.
+      if(page==='downloader')void scanLeftovers()}
    }catch{error='Unable to connect to Cloudflix server';auth='login'}
  }
  onMount(()=>{
@@ -1015,19 +1018,27 @@
         <h2>Queue <span>{movies.length}</span></h2>
         <p>{active} downloading · {completed} completed</p>
        </div>
-       <div class="download-queue-filters" role="group" aria-label="Filter downloads">
-        <Toggle class="queue-filter-toggle" pressed={queueFilter==='all'} onPressedChange={(pressed)=>{if(pressed)queueFilter='all'}} aria-label="Show all downloads">All</Toggle>
-        <Toggle class="queue-filter-toggle" pressed={queueFilter==='active'} onPressedChange={(pressed)=>{if(pressed)queueFilter='active'}} aria-label="Show in-progress downloads">In progress</Toggle>
-        <Toggle class="queue-filter-toggle" pressed={queueFilter==='completed'} onPressedChange={(pressed)=>{if(pressed)queueFilter='completed'}} aria-label="Show completed downloads">Completed</Toggle>
-       </div>
-       {#if leftoversChecked && leftoverCount>0}
-        <Button variant="outline" size="sm" class="cleanup-button" onclick={()=>void cleanUp()} disabled={cleanupBusy}
-          title={leftoverCount+' '+(leftoverCount===1?'file':'files')+' in the downloads folder no longer belong to any download in your queue.'}
-          aria-label={'Clean up '+leftoverCount+' unused '+(leftoverCount===1?'file':'files')+', freeing '+formatBytes(leftoverBytes)}>
+       <div class="download-queue-tools">
+        <!-- Always offered, not only when leftovers were already detected: a
+             delete can fail to unlink its files, and Clean up is the way to
+             reclaim them. When nothing is reclaimable it is disabled rather
+             than hidden, so it cannot silently disappear. -->
+        <Button variant="outline" size="sm" class="cleanup-button" onclick={()=>void cleanUp()} disabled={cleanupBusy||leftoverCount===0}
+          title={leftoverCount>0
+            ?leftoverCount+' '+(leftoverCount===1?'file':'files')+' in the downloads folder no longer belong to any download in your queue.'
+            :'No leftover files to clean up. Re-scans the downloads folder each time the Downloader page opens.'}
+          aria-label={leftoverCount>0
+            ?'Clean up '+leftoverCount+' unused '+(leftoverCount===1?'file':'files')+', freeing '+formatBytes(leftoverBytes)
+            :'Clean up unused files, nothing to clean up right now'}>
          {#if cleanupBusy}<Spinner class="size-4"/>{:else}<Trash2 size={15}/>{/if}
-         Clean up {formatBytes(leftoverBytes)}
+         Clean up{#if leftoverCount>0} {formatBytes(leftoverBytes)}{/if}
         </Button>
-       {/if}
+        <div class="download-queue-filters" role="group" aria-label="Filter downloads">
+         <Toggle class="queue-filter-toggle" pressed={queueFilter==='all'} onPressedChange={(pressed)=>{if(pressed)queueFilter='all'}} aria-label="Show all downloads">All</Toggle>
+         <Toggle class="queue-filter-toggle" pressed={queueFilter==='active'} onPressedChange={(pressed)=>{if(pressed)queueFilter='active'}} aria-label="Show in-progress downloads">In progress</Toggle>
+         <Toggle class="queue-filter-toggle" pressed={queueFilter==='completed'} onPressedChange={(pressed)=>{if(pressed)queueFilter='completed'}} aria-label="Show completed downloads">Completed</Toggle>
+        </div>
+       </div>
       </div>
       {#if queueItems.length}
        <div class="download-list queue-list">

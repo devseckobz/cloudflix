@@ -14,10 +14,21 @@ test('the Downloader offers a cleanup action for files no torrent owns',()=>{
  assert.match(component,/await call\('storage\/leftovers'\)/)
  assert.match(component,/const cleanUp=async\(\)=>/)
  assert.match(component,/await call\('storage\/cleanup','POST',\{\}\)/)
- // The button only appears when there is actually something to reclaim.
- assert.match(downloader,/\{#if leftoversChecked && leftoverCount>0\}/)
+ // The button is always present and disabled when nothing is reclaimable: a
+ // failed delete leaves files behind, and hiding the action then would leave no
+ // way to reclaim the space.
  assert.match(downloader,/class="cleanup-button"/)
- assert.match(downloader,/Clean up \{formatBytes\(leftoverBytes\)\}/)
+ assert.match(downloader,/disabled=\{cleanupBusy\|\|leftoverCount===0\}/)
+ assert.match(downloader,/Clean up\{#if leftoverCount>0\} \{formatBytes\(leftoverBytes\)\}\{\/if\}/)
+ assert.doesNotMatch(downloader,/\{#if leftoversChecked && leftoverCount>0\}/)
+})
+
+test('Clean up sits to the left of the filter toggles in one toolbar group',()=>{
+ const tools=downloader.indexOf('class="download-queue-tools"')
+ const cleanup=downloader.indexOf('class="cleanup-button"')
+ const filters=downloader.indexOf('class="download-queue-filters"')
+ assert.ok(tools>0 && cleanup>tools && filters>cleanup,'Clean up must precede the filters inside the tools group')
+ assert.match(css,/\.download-queue-tools\s*\{[\s\S]*?display:\s*inline-flex/)
 })
 
 test('cleanup always confirms before deleting and reports what it freed',()=>{

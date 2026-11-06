@@ -519,9 +519,9 @@ func (e *engine) foreignTorrentFilesLocked(skip string)map[string]bool{
 
 // deleteTorrentFilesLocked removes this torrent's payload files from disk. It
 // only ever unlinks paths the torrent itself declares, inside an os.Root, and
-// skips anything a different queued torrent still owns.
-func (e *engine) deleteTorrentFilesLocked(item *entry)error{
- owned:=e.torrentFilesLocked(item)
+// skips anything a different queued torrent still owns. owned is passed in
+// because the caller has already dropped the torrent handle by this point.
+func (e *engine) deleteTorrentFilesLocked(item *entry,owned []string)error{
  if len(owned)==0{return nil}
  foreign:=e.foreignTorrentFilesLocked(item.hash)
  root,err:=os.OpenRoot(e.downloads)
@@ -557,9 +557,9 @@ func (e *engine) deleteTorrentFilesLocked(item *entry)error{
 // deletePlaybackCacheLocked drops cached transcodes of this torrent's files.
 // Without it, a re-added movie would serve a stale transcode of the old bytes.
 // Both container layouts are cached under separate keys, so both are removed.
-func (e *engine) deletePlaybackCacheLocked(item *entry){
+func (e *engine) deletePlaybackCacheLocked(item *entry,owned []string){
  if e.cacheDir==""{return}
- for _,path:=range e.torrentFilesLocked(item){
+ for _,path:=range owned{
   key:=mkvKey(item.hash,path)
   for _,prefix:=range []string{key,key+faststartSuffix}{
    _=os.Remove(filepath.Join(e.cacheDir,prefix+".mp4"))
@@ -590,6 +590,12 @@ func (e *engine) action(hash,action string,deleteFiles bool)error{
   if item.validated{item.torrent.AllowDataDownload()}
  case "remove":
   if _,err:=e.db.Exec("DELETE FROM torrents WHERE hash=?",hash);err!=nil{return err}
+  // Collect the payload paths BEFORE dropping the torrent. Drop clears the
+  // torrent's handle, and torrentFilesLocked then falls back to fileManifest,
+  // which is nil unless the user happened to open the Files dialog -- so
+  // deleting first silently left every downloaded file on disk while removing
+  // the queue row, which is exactly the bug this ordering fixes.
+  ownedFiles:=e.torrentFilesLocked(item)
   if item.torrent!=nil{
    item.torrent.DisallowDataDownload()
    item.torrent.Drop()
@@ -600,14 +606,14 @@ func (e *engine) action(hash,action string,deleteFiles bool)error{
   // nothing to delete. Paths always come from the torrent's own metadata or
   // the inspected manifest, never from the request.
   if deleteFiles && item.rejectionReason==""{
-   if err:=e.deleteTorrentFilesLocked(item);err!=nil{
+   if err:=e.deleteTorrentFilesLocked(item,ownedFiles);err!=nil{
     // The queue row is already gone; report the file error rather than
     // pretending the delete was complete.
     item.fileManifest=nil
     delete(e.entries,hash)
     return fmt.Errorf("torrent removed, but some files could not be deleted: %w",err)
    }
-   e.deletePlaybackCacheLocked(item)
+   e.deletePlaybackCacheLocked(item,ownedFiles)
   }
   item.fileManifest=nil
   item.fileInspectionError=""

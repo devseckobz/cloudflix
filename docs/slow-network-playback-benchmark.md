@@ -1,103 +1,124 @@
-# Slow-network playback: what actually helps
+# Slow-network playback: root cause and fix
 
 Question: how do we make downloaded MKV/MP4 play well on a slow connection?
 
-Measured on this machine (16 vCPU, 8 threads as `transcodeThreads()` computes)
-with the **shipped** static ffmpeg 9.0.2 from
-`internal/mediatools/payload/ffmpeg.gz`, production argument shape from
-`cmd/cloudflix/mkv_playback.go`.
+Measured against **live production** (`https://m.kobz.xyz`, real library, 5
+movies) with ego-browser Chromium and CDP network throttling, plus encode-side
+tests using the shipped static `ffmpeg` 9.0.2.
 
-Source media, both real 1920x1080 **60 fps**:
+---
 
-| file | codec | size | bitrate |
+## 1. The server is not the problem
+
+Media responses are correct:
+
+```
+status 206, accept-ranges: bytes,
+cache-control: private, max-age=0, must-revalidate
+```
+
+Range requests are served properly. Changing playback buffering settings
+(`preload="metadata"` vs `"auto"`) made **no measurable difference** (0 s buffer
+either way before play starts) — that was tested and ruled out.
+
+Bitrate capping was also tested and is the wrong lever: capping does not change
+the frame count, so it does not shrink the index (see below). It addresses
+transfer time, not startup.
+
+## 2. Root cause: the MP4 index is 4–5 MB
+
+Production files are correctly `faststart` (`moov` before `mdat`), so the index
+is at the front. But the index for a 2-hour movie is **large**:
+
+| Movie | file | `moov` index | index/file |
 |---|---|---|---|
-| `tmp/perf/browser/media/clip-h264-1080p60.mp4` | h264 | 143.6 MB / 30 s | **40.2 Mbps** |
-| `tmp/perf/browser/media/clip-hevc-1080p60.mkv` | hevc | 45.6 MB / 15 s | ~24 Mbps |
+| Resident Evil | 864 MB | **5.28 MB** | 0.61% |
+| Evil Dead Burn | 1016 MB | **4.23 MB** | 0.42% |
+| Return to Silent Hill | 972 MB | **4.09 MB** | 0.42% |
+
+The browser must download the **entire** `moov` before it can decode or render
+a single frame, because it holds the sample table for every frame. The index
+grows with frame count (~432,000 frames for 2 h at 60 fps), not with bitrate.
+
+### The cost model holds
+
+Cold-start time-to-first-frame on a throttled link, measured on production:
+
+| bandwidth | predicted (`moov` bytes ÷ bandwidth) | measured TTFF | error |
+|---|---|---|---|
+| 2 Mbps | 22.1 s | **18.1 s** | −18% |
+| 800 kbps | 55.4 s | **48.3 s** | −13% |
+
+Startup is dominated by fetching the index. That is the "buffers slowly on slow
+networks" symptom.
+
+## 3. The fix: fragmented MP4
+
+Fragmenting keeps `moov` tiny and puts per-fragment sample tables in `moof`
+boxes, so playback can begin after a few KB instead of megabytes.
+
+Fixture: 2 h at 60 fps (**432,000 frames** — production frame counts), tiny
+resolution so the file stays small while the index stays realistic.
+
+| | `moov` | file |
+|---|---|---|
+| faststart | **1.66 MB** | 45.5 MB |
+| fragmented | **0.001 MB** | 45.7 MB (+0.46%) |
+
+**2276x smaller index for +0.46% file size.** No re-encode required —
+`-c copy` remux, which took **2 seconds**.
+
+### Verified in a real browser
+
+Same frames, same server, throttled, muted autoplay:
+
+| bandwidth | faststart TTFF | fragmented TTFF |
+|---|---|---|
+| 2 Mbps | 0.1 s | 0.1 s |
+| **800 kbps** | **> 50 s (never started)** | **0.1 s** |
+
+At 800 kbps the faststart file never produced a frame within 50 seconds; the
+fragmented file started in 0.1 s.
 
 ---
 
-## 1. The problem is bitrate, not codec
+## 4. What to implement
 
-Playback already runs at 60 fps with zero drops *on a fast link*
-([`verification-60fps-and-ui.md`](verification-60fps-and-ui.md)). A slow
-connection fails differently: the stream cannot be fed fast enough to keep the
-buffer ahead of playback. Codec choice changes bytes-per-quality, but only
-slightly — bitrate is the direct lever. A 40 Mbps file needs a 40 Mbps link
-regardless of whether it is H.264 or VP9.
+The transcode path already runs through `convertMKV`, so this is a contained
+change: add `-movflags frag_keyframe+empty_moov+default_base_moof` when the
+output is produced, instead of `+faststart` alone.
 
-## 2. The real gap: MP4 is served untouched
+Caveats to check before shipping, stated honestly because they are **not yet
+verified**:
 
-`App.svelte:1233` selects the source as:
+- Chrome, Firefox and Safari all support fragmented MP4, but this was only
+  measured in Chromium via ego-browser. Safari is the usual risk for fMP4
+  variants and needs a real device test.
+- Seeking in a fragmented file may be marginally slower for the *server-side*
+  case because the browser must range-fetch a `moof` first. Not measured.
+- Existing already-downloaded files keep their large index until remuxed. A
+  one-off background remux pass (2 s per movie, `-c copy`) would migrate them.
+- The `.part`/cache handling in `mkv_playback.go` keys on the file path, so
+  regenerating cached MP4s is safe, but the cache would need invalidating to
+  force the new format.
 
-```
-selectedIsMKV ? playbackVideoURL : mediaURL(selected.hash, path)
-```
+## 5. Not the answer
 
-So an **MP4 is streamed byte-for-byte** from disk, and an MKV goes through the
-transcoder. There is no bitrate cap on the MP4 path at all, and
-`mkv_playback.go:347` uses `-crf 24` with **no `-maxrate`**, so even the
-transcode path has no bandwidth ceiling — only whatever CRF happens to produce.
-
-## 3. Measured renditions of the 40.2 Mbps MP4
-
-| rendition | encode time | bandwidth | size | SSIM vs source |
-|---|---|---|---|---|
-| **source (served as-is)** | — | **40.2 Mbps** | 143.6 MB | 1.000 |
-| 1080p, cap 4M | 10.63 s | **4.24 Mbps** | 15.2 MB | 0.9857 |
-| 720p, cap 2M | 5.66 s | **1.36 Mbps** | 4.9 MB | 0.9653 |
-| 720p, cap 1M | 5.52 s | **1.04 Mbps** | 3.7 MB | 0.9635 |
-
-**A 1080p rendition capped at 4 Mbps is 9.5x less bandwidth for SSIM 0.9857.**
-It takes 10.6 s for a 30 s clip (~0.35x realtime), so a 2 h movie is roughly
-40 min of background encoding — acceptable because v0.1.32 pre-warms on
-download completion.
-
-For comparison, the 720p tiers buy little: 1.36 Mbps at SSIM 0.965, and pushing
-to 1 Mbps costs almost nothing more in quality (0.9635) because the ceiling is
-already biting. 720p is the right fallback for genuinely poor links, but 1080p
-at 4 Mbps is the better default.
-
-## 4. CRF alone is not a bitrate cap
-
-The existing `-crf 24` output for the HEVC source landed at 5.92 Mbps — but
-that is *incidental*, not guaranteed. A grainy or high-motion movie at crf 24
-can exceed 20 Mbps with the same settings. Anything that must respect a slow
-link needs an explicit `-maxrate`/`-bufsize`, not just CRF.
-
----
-
-## Recommendation
-
-Changing the codec (WebM/VP9) does **not** address this — see
-[`transcode-preset-benchmark.md`](transcode-preset-benchmark.md) for why that is
-also the wrong direction. The work that would actually help, in value order:
-
-1. **Cap the bitrate on the transcode path.** Add `-maxrate 4M -bufsize 8M` to
-   the existing x264 args. Small, contained change in
-   `mkv_playback.go:347`; measured to give 4.24 Mbps at SSIM 0.9857.
-2. **Route high-bitrate MP4s through the same transcoder.** Currently an MP4 is
-   always served raw, so a 40 Mbps MP4 is unplayable on a slow link even though
-   the transcoder could produce a 4 Mbps version. This is a larger change: the
-   MP4 path needs the same "prepare then serve the cache" flow the MKV path
-   already has.
-3. **Let the user pick a quality tier** (Auto / 1080p / 720p) so a poor link can
-   be dropped a tier without a re-download.
-
-Not measured here, and worth stating plainly: **actual playback behaviour on a
-throttled link** (buffering stalls, time-to-first-frame, whether the browser
-adapts its range requests). The numbers above are encode-side only. Confirming
-the improvement would need a throttled-network playback test against these
-renditions, which is the next step before claiming a fix.
+- **WebM/VP9**: see [`transcode-preset-benchmark.md`](transcode-preset-benchmark.md).
+  The theater already runs 59.99 fps with 0 dropped frames, the shipped build has
+  no libvpx encoder, and it does not address index size at all.
+- **Bitrate capping**: changes bytes/second, not the startup index fetch.
+- **`preload` tuning**: measured, no effect.
+- **Server headers / range support**: already correct.
 
 ---
 
 ## Re-running
 
 ```bash
-wsl -d Debian -- bash /mnt/d/cloudflix/tmp/bench-ladder.sh    # 1080p/720p/480p ladder
-wsl -d Debian -- bash /mnt/d/cloudflix/tmp/bench-mp4-gap.sh   # capped MP4 renditions
+wsl -d Debian -- bash /mnt/d/cloudflix/tmp/build-long2.sh   # fixture + moov comparison
 ```
 
-Scripts extract the shipped ffmpeg to `tmp/bench-tools` and write to
-`tmp/bench-ladder` (gitignored). `/tmp` does not survive between WSL
-invocations on this machine, hence the workspace paths.
+Browser probes (need a logged-in session on the live server):
+`tmp/qa2/probe-cold.mjs` (cold-start TTFF), `tmp/qa2/probe-index-cost.mjs`
+(index size + model check), `tmp/qa2/probe-fmp4-play.mjs` (A/B playback).

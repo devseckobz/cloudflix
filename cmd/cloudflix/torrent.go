@@ -491,18 +491,44 @@ func (e *engine) add(magnet string)(string,error){
 // can never point outside the downloads root.
 func (e *engine) torrentFilesLocked(item *entry)[]string{
  var paths []string
+ for _,path:=range e.torrentAllFilesLocked(item){
+  if allowedMediaPath(path){paths=append(paths,path)}
+ }
+ return paths
+}
+
+// torrentAllFilesLocked lists every path a torrent declares, not just the media
+// ones. A release ships sidecars too (.nfo, .jpg, .txt, extra subtitles), and
+// leaving those behind is what made a deleted movie's folder survive with
+// nothing in it the scanner recognised. Paths are still validated for safety.
+func (e *engine) torrentAllFilesLocked(item *entry)[]string{
+ var paths []string
  if item.torrent!=nil && item.torrent.Info()!=nil{
   for _,file:=range item.torrent.Files(){
-   if path:=filepath.ToSlash(file.Path());allowedMediaPath(path){paths=append(paths,path)}
+   if path:=filepath.ToSlash(file.Path());safeTorrentPath(path){paths=append(paths,path)}
   }
   return paths
  }
  if item.fileManifest!=nil{
   for _,file:=range item.fileManifest.Files{
-   if file.Selected && allowedMediaPath(file.Path){paths=append(paths,file.Path)}
+   if safeTorrentPath(file.Path){paths=append(paths,file.Path)}
   }
  }
  return paths
+}
+
+// safeTorrentPath reports whether a torrent-declared path may be touched on
+// disk. Extension is deliberately not restricted here: the CALLER decides which
+// extensions its operation covers. Every path still has to be a clean relative
+// path that stays inside the downloads root, so a hostile torrent cannot use
+// this to reach outside it.
+func safeTorrentPath(path string)bool{
+ if path=="" || strings.Contains(path,"\\"){return false}
+ for _,part:=range strings.Split(path,"/"){
+  if part=="" || part=="." || part==".."{return false}
+ }
+ local:=filepath.FromSlash(path)
+ return filepath.IsLocal(local) && filepath.ToSlash(local)==path
 }
 
 // foreignTorrentFilesLocked collects every media path another queued torrent
@@ -595,7 +621,15 @@ func (e *engine) action(hash,action string,deleteFiles bool)error{
   // which is nil unless the user happened to open the Files dialog -- so
   // deleting first silently left every downloaded file on disk while removing
   // the queue row, which is exactly the bug this ordering fixes.
-  ownedFiles:=e.torrentFilesLocked(item)
+  //
+  // Every declared path is collected, not just media: a release folder also
+  // holds .nfo/.jpg/.txt sidecars, and deleting only the movie left an orphan
+  // directory no UI surface could see or reclaim.
+  ownedAll:=e.torrentAllFilesLocked(item)
+  ownedFiles:=make([]string,0,len(ownedAll))
+  for _,path:=range ownedAll{
+   if allowedMediaPath(path){ownedFiles=append(ownedFiles,path)}
+  }
   if item.torrent!=nil{
    item.torrent.DisallowDataDownload()
    item.torrent.Drop()
@@ -604,9 +638,10 @@ func (e *engine) action(hash,action string,deleteFiles bool)error{
   // Stop the torrent before touching its files, then unlink the payload when
   // asked. Rejected torrents never requested payload pieces, so they have
   // nothing to delete. Paths always come from the torrent's own metadata or
-  // the inspected manifest, never from the request.
+  // the inspected manifest, never from the request. All declared files are
+  // removed so sidecars cannot strand an otherwise-empty release folder.
   if deleteFiles && item.rejectionReason==""{
-   if err:=e.deleteTorrentFilesLocked(item,ownedFiles);err!=nil{
+   if err:=e.deleteTorrentFilesLocked(item,ownedAll);err!=nil{
     // The queue row is already gone; report the file error rather than
     // pretending the delete was complete.
     item.fileManifest=nil

@@ -42,10 +42,21 @@ const maxLeftoverFiles = 500
 // reclaimableMediaName reports whether a path looks like something Cloudflix
 // itself could have downloaded. Only these are ever considered garbage: a
 // stray non-media file is not ours to delete.
+//
+// Sidecar files a media release ships next to the movie are included (.nfo scene
+// notes, artwork, extra subtitle formats). Ignoring them meant a release folder
+// whose media had been deleted still held files while the scan reported nothing,
+// so Clean up stayed disabled and the directory could never be reclaimed.
+//
+// The list stays a fixed allowlist of extensions that only a release carries.
+// Plain .txt is deliberately excluded: it is too easy to confuse with a note
+// someone put in the downloads folder, and an existing test pins that a loose
+// .txt is never ours to delete.
 func reclaimableMediaName(path string)bool{
  name:=strings.TrimSuffix(path,partSuffix)
  switch strings.ToLower(filepath.Ext(name)){
- case ".mp4",".mkv",".srt":
+ case ".mp4",".mkv",".srt",".avi",".m4v",".webm",".mov",".flv",".wmv",
+  ".nfo",".jpg",".jpeg",".png",".sub",".idx",".ass",".ssa",".vtt":
   return true
  }
  return false
@@ -63,7 +74,10 @@ func (e *engine) expectedFilesLocked()(map[string]bool,error){
   if item.torrent!=nil && item.torrent.Info()==nil && item.rejectionReason==""{
    return nil,errors.New("the queue is still loading torrent metadata. Nothing was deleted; try again once the queue settles.")
   }
-  for _,path:=range e.torrentFilesLocked(item){
+  // Every declared path, not just media: sidecars are reclaimable too, so a
+  // live torrent's own .nfo/.jpg must be protected or Clean up would delete
+  // files belonging to a download the user still has.
+  for _,path:=range e.torrentAllFilesLocked(item){
    expected[path]=true
    expected[path+partSuffix]=true
   }

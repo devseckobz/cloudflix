@@ -4,7 +4,7 @@ Self-hosted movie downloader for a Linux VPS: paste a magnet, track downloads, b
 
 ## Quick start
 
-Ubuntu/Debian with systemd, amd64 or arm64. Data `/var/lib/cloudflix`, config `/etc/cloudflix/cloudflix.env`, port `80/tcp`.
+Ubuntu/Debian with systemd on amd64. Data `/var/lib/cloudflix`, config `/etc/cloudflix/cloudflix.env`, port `80/tcp`.
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/devseckobz/cloudflix/main/installer/install.sh | sudo bash

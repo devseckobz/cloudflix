@@ -88,13 +88,10 @@
  let revokingSession = $state('')
  // Downloader → "Clean up": downloaded files on disk that no queued torrent
  // claims. Scanning is read-only; deleting always asks first.
- type Leftover = {path:string,size:number}
- let leftovers = $state<Leftover[]>([])
  let leftoverBytes = $state(0)
  let leftoverCount = $state(0)
- let leftoverTruncated = $state(false)
  let cleanupBusy = $state(false)
- let leftoversChecked = $state(false)
+ let leftoverScan:Promise<void>|undefined
  // Ignore the initial server version; reload only when the running binary changes.
  const versionMonitor=createVersionReloadMonitor(()=>window.location.reload())
  const navigate=(destination:'home'|'downloader'|'settings')=>{
@@ -417,14 +414,15 @@
  // Ask the server which files on disk no queued torrent claims. Read-only, so
  // it is safe to run whenever the Downloader page opens.
  const scanLeftovers=async()=>{
-   try{
-     const result=await call('storage/leftovers')
-     leftovers=Array.isArray(result?.files)?(result.files as Leftover[]):[]
-     leftoverCount=Number(result?.count)||0
-     leftoverBytes=Number(result?.bytes)||0
-     leftoverTruncated=Boolean(result?.truncated)
-     leftoversChecked=true
-   }catch{/* A queue still loading metadata refuses the scan; the button simply stays hidden. */}
+   if(leftoverScan)return leftoverScan
+   leftoverScan=(async()=>{
+     try{
+       const result=await call('storage/leftovers')
+       leftoverCount=Number(result?.count)||0
+       leftoverBytes=Number(result?.bytes)||0
+     }catch{/* A queue still loading metadata refuses the scan; the next poll retries. */}
+   })()
+   try{await leftoverScan}finally{leftoverScan=undefined}
  }
  const cleanUp=async()=>{
    if(cleanupBusy||!leftoverCount)return
@@ -438,6 +436,7 @@
    if(ok!==true)return
    cleanupBusy=true
    try{
+     await leftoverScan
      const result=await call('storage/cleanup','POST',{})
      const deleted=Number(result?.deleted)||0
      notify('Deleted '+deleted+' '+(deleted===1?'file':'files')+', freeing '+formatBytes(Number(result?.bytes)||0)+'.')
@@ -514,7 +513,7 @@
    }catch{error='Unable to connect to Cloudflix server';auth='login'}
  }
  onMount(()=>{
-   const handleBack=()=>{page=window.location.pathname==='/settings'?'settings':window.location.pathname==='/downloader'?'downloader':'home';if(page==='settings'||page==='downloader')void loadSettings();if(page==='settings')void loadSessions()}
+   const handleBack=()=>{page=window.location.pathname==='/settings'?'settings':window.location.pathname==='/downloader'?'downloader':'home';if(page==='settings'||page==='downloader')void loadSettings();if(page==='settings')void loadSessions();if(page==='downloader'&&!cleanupBusy)void scanLeftovers()}
    // Escape dismisses the theater; the Files dialog handles this via Dialog.Root.
    const handleEscape=(event:KeyboardEvent)=>{
      if(event.key==='Escape'&&selected&&!fileViewer)closeMovie()
@@ -540,7 +539,10 @@
    const sessionsPoll=setInterval(()=>{
      if(page==='settings'&&auth==='ready')void loadSessions(true)
    },10000)
-   return ()=>{live?.close();stopWatchingTimer();clearInterval(updaterPoll);clearInterval(fileInspectionPoll);clearInterval(mkvPlaybackPoll);clearInterval(sessionsPoll);window.removeEventListener('popstate',handleBack);window.removeEventListener('keydown',handleEscape)}
+   const cleanupPoll=setInterval(()=>{
+     if(page==='downloader'&&auth==='ready'&&!cleanupBusy&&!document.hidden)void scanLeftovers()
+   },10000)
+   return ()=>{live?.close();stopWatchingTimer();clearInterval(updaterPoll);clearInterval(fileInspectionPoll);clearInterval(mkvPlaybackPoll);clearInterval(sessionsPoll);clearInterval(cleanupPoll);window.removeEventListener('popstate',handleBack);window.removeEventListener('keydown',handleEscape)}
  })
  const authenticate=async()=>{
    error=''
@@ -555,6 +557,7 @@
      await refresh()
      connect()
      if(page==='settings')void loadSessions()
+     if(page==='downloader')void scanLeftovers()
      await loadResume()
    }catch(e){
      error=(e as Error).message
@@ -642,6 +645,7 @@
      await refresh()
    }
    catch(e){fail((e as Error).message)}
+   finally{if(verb==='remove'&&!cleanupBusy)void scanLeftovers()}
  }
 </script>
 
@@ -1026,7 +1030,7 @@
         <Button variant="outline" size="sm" class="cleanup-button" onclick={()=>void cleanUp()} disabled={cleanupBusy||leftoverCount===0}
           title={leftoverCount>0
             ?leftoverCount+' '+(leftoverCount===1?'file':'files')+' in the downloads folder no longer belong to any download in your queue.'
-            :'No leftover files to clean up. Re-scans the downloads folder each time the Downloader page opens.'}
+            :'No leftover files detected. The Downloader checks periodically.'}
           aria-label={leftoverCount>0
             ?'Clean up '+leftoverCount+' unused '+(leftoverCount===1?'file':'files')+', freeing '+formatBytes(leftoverBytes)
             :'Clean up unused files, nothing to clean up right now'}>

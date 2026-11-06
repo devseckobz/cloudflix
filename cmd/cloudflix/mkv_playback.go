@@ -147,12 +147,13 @@ func playbackMovflags(key string)string{
 func mp4Layout(file *os.File) (fragmented bool,ok bool){
  header:=make([]byte,8)
  var offset int64
- for offset<8<<20{ // moov, moof and mdat always sit near the front.
+ // Both formats can begin with moov. The first media box tells them apart.
+ for i:=0;i<64;i++{
   if _,err:=file.ReadAt(header,offset);err!=nil{return false,false}
   size:=int64(header[0])<<24|int64(header[1])<<16|int64(header[2])<<8|int64(header[3])
   switch string(header[4:8]){
   case "moof":return true,true
-  case "moov","mdat":return false,true
+  case "mdat":return false,true
   }
   if size<8{return false,false}
   offset+=size
@@ -418,6 +419,23 @@ func commandFromMKV(ctx context.Context,exe string,source *os.File,args ...strin
  err:=cmd.Run()
  return output.data.Bytes(),err
 }
+// Both layouts use the same codecs. A prepared sibling only needs remuxing,
+// even if the original MKV needed a full encode.
+func remuxCachedLayout(ctx context.Context,ffmpeg,dir,key,output string)bool{
+ base:=strings.TrimSuffix(key,faststartSuffix)
+ sibling:=base+faststartSuffix
+ if sibling==key{sibling=base}
+ if _,ready:=cachedMKV(dir,sibling);!ready{return false}
+ file,err:=os.Open(filepath.Join(dir,sibling+".mp4"))
+ if err!=nil{return false}
+ defer file.Close()
+ if _,ok:=mp4Layout(file);!ok{return false}
+ _,err=commandFromMKV(ctx,ffmpeg,file,"-nostdin","-hide_banner","-loglevel","error","-xerror","-y",
+  "-i","/proc/self/fd/3","-map","0:v:0","-map","0:a:0?","-c","copy",
+  "-movflags",playbackMovflags(key),"-fs",strconv.FormatInt(maxConvertedMP4,10),output)
+ return err==nil
+}
+
 func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJob){
  defer source.Close()
  m:=a.playback
@@ -484,9 +502,11 @@ func (a *application) convertMKV(source *os.File,hash,path,key string,job *mkvJo
   args=append(args,"-c:a","aac","-b:a","160k")
  }
  args=append(args,"-movflags",playbackMovflags(key),"-fs",strconv.FormatInt(maxConvertedMP4,10),temporary)
- if _,err:=commandFromMKV(ctx,ffmpeg,source,args...);err!=nil{
-  a.updateMKVJob(job,"error","MKV conversion failed. Check available disk space and whether the movie file is valid.")
-  return
+ if !remuxCachedLayout(ctx,ffmpeg,dir,key,temporary){
+  if _,err:=commandFromMKV(ctx,ffmpeg,source,args...);err!=nil{
+   a.updateMKVJob(job,"error","MKV conversion failed. Check available disk space and whether the movie file is valid.")
+   return
+  }
  }
  converted,err:=os.Stat(temporary)
  if err!=nil||!converted.Mode().IsRegular()||converted.Size()==0||converted.Size()>maxConvertedMP4{

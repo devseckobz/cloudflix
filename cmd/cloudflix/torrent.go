@@ -219,12 +219,14 @@ func (e *engine) fileVerifiedLocked(item *entry,tt *torrent.Torrent,path string)
 func selectedFileStats(tt *torrent.Torrent)(size,completed int64,files []map[string]any){
  files=make([]map[string]any,0)
  if tt==nil || tt.Info()==nil{return}
+ complete:=tt.Complete().Bool()
  for _,file:=range tt.Files(){
   path:=filepath.ToSlash(file.Path())
   if !allowedMediaPath(path){continue}
   n:=file.Length()
   if n<=0{continue}
-  downloaded:=file.BytesCompleted()
+  downloaded:=n
+  if !complete{downloaded=file.BytesCompleted()}
   if downloaded<0{downloaded=0}
   if downloaded>n{downloaded=n}
   size+=n
@@ -538,7 +540,7 @@ func (e *engine) foreignTorrentFilesLocked(skip string)map[string]bool{
  foreign:=make(map[string]bool)
  for hash,other:=range e.entries{
   if hash==skip || other==nil{continue}
-  for _,path:=range e.torrentFilesLocked(other){foreign[path]=true}
+  for _,path:=range e.torrentAllFilesLocked(other){foreign[path]=true}
  }
  return foreign
 }

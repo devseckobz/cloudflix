@@ -85,14 +85,16 @@ func (e *engine) expectedFilesLocked()(map[string]bool,error){
  return expected,nil
 }
 
-// scanLeftovers walks the downloads directory and returns every downloadable
-// file the queue does not account for. Read-only.
 func (e *engine) scanLeftovers()(cleanupPreview,error){
  e.mu.Lock()
  expected,err:=e.expectedFilesLocked()
  e.mu.Unlock()
  if err!=nil{return cleanupPreview{},err}
+ return e.walkLeftovers(expected,nil)
+}
 
+// visit can remove a candidate. Only candidates it accepts are counted.
+func (e *engine) walkLeftovers(expected map[string]bool,visit func(leftoverFile)bool)(cleanupPreview,error){
  var preview cleanupPreview
  preview.Files=make([]leftoverFile,0)
  walkErr:=filepath.WalkDir(e.downloads,func(absolute string,d fs.DirEntry,err error)error{
@@ -113,10 +115,12 @@ func (e *engine) scanLeftovers()(cleanupPreview,error){
   if expected[path] || expected[strings.TrimSuffix(path,partSuffix)]{return nil}
   size:=int64(0)
   if info,statErr:=d.Info();statErr==nil{size=info.Size()}
+  file:=leftoverFile{Path:path,Size:size}
+  if visit!=nil && !visit(file){return nil}
   preview.Count++
   preview.Bytes+=size
   if len(preview.Files)<maxLeftoverFiles{
-   preview.Files=append(preview.Files,leftoverFile{Path:path,Size:size})
+   preview.Files=append(preview.Files,file)
   }else{
    preview.Truncated=true
   }
@@ -131,54 +135,42 @@ func (e *engine) scanLeftovers()(cleanupPreview,error){
 // for, then prunes the directories that are left empty. Everything happens
 // through an os.Root, so a discovered path cannot escape the downloads root.
 func (e *engine) removeLeftovers()(cleanupPreview,error){
- preview,err:=e.scanLeftovers()
- if err!=nil{return cleanupPreview{},err}
- if preview.Count==0{return preview,nil}
-
- // Recompute the expected set immediately before deleting: a torrent added
- // between the scan and the unlink must not have its fresh file removed.
+ // Keep ownership stable from the scan through the last unlink.
  e.mu.Lock()
+ defer e.mu.Unlock()
  expected,err:=e.expectedFilesLocked()
- e.mu.Unlock()
  if err!=nil{return cleanupPreview{},err}
 
  root,err:=os.OpenRoot(e.downloads)
- if err!=nil{return preview,err}
+ if err!=nil{return cleanupPreview{},err}
  defer root.Close()
 
  directories:=make(map[string]bool)
- var removed int
- var freed int64
  var firstErr error
- for _,file:=range preview.Files{
-  if expected[file.Path] || expected[strings.TrimSuffix(file.Path,partSuffix)]{continue}
+ preview,walkErr:=e.walkLeftovers(expected,func(file leftoverFile)bool{
   local:=filepath.FromSlash(file.Path)
-  if !filepath.IsLocal(local){continue}
+  if !filepath.IsLocal(local){return false}
   if err:=root.Remove(local);err!=nil{
    if !errors.Is(err,os.ErrNotExist) && firstErr==nil{firstErr=err}
-   continue
+   return false
   }
-  removed++
-  freed+=file.Size
   for dir:=filepath.Dir(local);dir!="." && dir!=string(filepath.Separator);dir=filepath.Dir(dir){
    directories[dir]=true
   }
- }
+  return true
+ })
  // Deepest first so a nested release folder empties before its parent is tried.
  ordered:=make([]string,0,len(directories))
  for dir:=range directories{ordered=append(ordered,dir)}
  sort.Slice(ordered,func(i,j int)bool{return len(ordered[i])>len(ordered[j])})
  for _,dir:=range ordered{_=root.Remove(dir)}
 
- // Report what was actually removed rather than what was scanned.
- preview.Count=removed
- preview.Bytes=freed
- if len(preview.Files)>removed{preview.Files=preview.Files[:removed]}
- return preview,firstErr
+ return preview,errors.Join(walkErr,firstErr)
 }
 
 // storageLeftovers reports reclaimable files without deleting anything.
 func (a *application) storageLeftovers(w http.ResponseWriter,r *http.Request){
+ w.Header().Set("Cache-Control","no-store")
  preview,err:=a.engine.scanLeftovers()
  if err!=nil{fail(w,http.StatusConflict,err.Error());return}
  respond(w,http.StatusOK,map[string]any{

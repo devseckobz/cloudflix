@@ -46,6 +46,9 @@ func torrentRemainingBytes(tt *torrent.Torrent) uint64 {
 	if tt == nil || tt.Info() == nil {
 		return 0
 	}
+	if tt.Complete().Bool() {
+		return 0
+	}
 	var remaining uint64
 	for _, file := range tt.Files() {
 		if allowedMediaPath(filepath.ToSlash(file.Path())) {

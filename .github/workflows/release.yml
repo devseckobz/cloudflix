@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'New release tag (for example v0.1.41)'
+        description: 'New release tag (for example v0.1.42)'
         required: true
 permissions:
   contents: write
@@ -15,14 +15,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   media-tools:
-    strategy:
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools (release runner only)
@@ -36,7 +29,7 @@ jobs:
           cp tmp/cloudflix-media-sources.tar.gz tmp/media-artifact/
       - uses: actions/upload-artifact@v4
         with:
-          name: media-${{ matrix.arch }}
+          name: media-amd64
           path: tmp/media-artifact/
           retention-days: 7
   release:
@@ -64,7 +57,7 @@ jobs:
           elif [[ "$REF_TYPE" == "tag" ]];then
             TAG="$REF_NAME"
           else
-            TAG="v0.1.41"
+            TAG="v0.1.42"
           fi
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][a-zA-Z0-9.]+)?$ ]]
           echo "TAG=$TAG" >> "$GITHUB_ENV"
@@ -90,23 +83,21 @@ jobs:
       - uses: actions/download-artifact@v4
         if: env.ALREADY_RELEASED != 'true'
         with:
-          pattern: media-*
-          path: tmp/media-artifacts
-      - name: Build Linux binaries with embedded media tools
+          name: media-amd64
+          path: tmp/media-amd64
+      - name: Build Linux amd64 binary with embedded media tools
         if: env.ALREADY_RELEASED != 'true'
         run: |
           set -euo pipefail
           mkdir -p dist
-          for ARCH in amd64 arm64;do
-            cp tmp/media-artifacts/media-$ARCH/payload/* internal/mediatools/payload/
-            if [[ "$ARCH" == amd64 ]];then go test ./internal/mediatools ./cmd/cloudflix -run TestBundled -count=1;fi
-            CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath -ldflags "-s -w -X main.version=$TAG" -o cloudflix ./cmd/cloudflix
-            tar -czf "dist/cloudflix-linux-$ARCH.tar.gz" cloudflix
-            (cd dist && sha256sum "cloudflix-linux-$ARCH.tar.gz" > "cloudflix-linux-$ARCH.tar.gz.sha256")
-          done
-          cp tmp/media-artifacts/media-amd64/cloudflix-media-sources.tar.gz dist/
+          cp tmp/media-amd64/payload/* internal/mediatools/payload/
+          go test ./internal/mediatools ./cmd/cloudflix -run 'TestBundled|TestFFmpegProducesTheTwoLayouts|TestRemuxCachedLayout' -count=1
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$TAG" -o cloudflix ./cmd/cloudflix
+          tar -czf dist/cloudflix-linux-amd64.tar.gz cloudflix
+          (cd dist && sha256sum cloudflix-linux-amd64.tar.gz > cloudflix-linux-amd64.tar.gz.sha256)
+          cp tmp/media-amd64/cloudflix-media-sources.tar.gz dist/
           (cd dist && sha256sum cloudflix-media-sources.tar.gz > cloudflix-media-sources.tar.gz.sha256)
-          cat tmp/media-artifacts/media-amd64/payload/VERSIONS.txt tmp/media-artifacts/media-amd64/payload/FFmpeg-COPYING.txt tmp/media-artifacts/media-amd64/payload/x264-COPYING.txt tmp/media-artifacts/media-amd64/payload/musl-COPYRIGHT.txt > dist/cloudflix-media-notices.txt
+          cat tmp/media-amd64/payload/{VERSIONS.txt,FFmpeg-COPYING.txt,x264-COPYING.txt,musl-COPYRIGHT.txt} > dist/cloudflix-media-notices.txt
           rm cloudflix
       - name: Publish GitHub release
         if: env.ALREADY_RELEASED != 'true'

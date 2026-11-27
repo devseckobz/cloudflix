@@ -55,6 +55,24 @@ the "did we remember to bump?" question rather than leaving it to be judged.
 The only things to still avoid: **never bump by two versions in one commit**,
 and never reuse a tag that already exists.
 
+### Confirming the release landed (not the same as watching CI)
+
+Polling the run is still forbidden. But the silent-skip trap above means a green
+checkmark is **not** proof that anything shipped, so one cheap call after the
+push is worth it — it reads the release, never the run:
+
+```
+GET https://api.github.com/repos/devseckobz/cloudflix/releases/tags/<tag>
+```
+
+- **200** with the five assets = shipped.
+- **404** = not shipped *yet*, or a silent skip. Immediately after the push a
+  404 is normal: `media-tools` compiles FFmpeg and x264 from source, so the
+  release does not exist for several minutes. Do not loop, sleep or retry-poll
+  on it — a 404 seconds after the push proves nothing.
+- Only treat it as a real failure when the user reports the release broken, or
+  when checking at least ~20 minutes after the push, and then read that one run.
+
 ### If a release is ever reported as broken
 
 The user watches GitHub themselves; the agent does not poll it. Only look at a
@@ -72,7 +90,7 @@ wsl -d Debian -- bash -lc 'cd /mnt/d/cloudflix && go test -race ./cmd/cloudflix 
 
 # Frontend
 npm.cmd run check --prefix frontend      # must be 0 errors AND 0 warnings
-npm.cmd test --prefix frontend           # must never shrink (currently 82/82)
+npm.cmd test --prefix frontend           # must never shrink (currently 85/85)
 npm.cmd run build --prefix frontend      # writes static/dist
 
 # Shell scripts (mirrors the CI step)

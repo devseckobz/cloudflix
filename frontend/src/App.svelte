@@ -21,12 +21,12 @@
  import { confirmDialog } from '$lib/components/ui/alert-dialog/index.js'
  import { Toaster, toast } from '$lib/components/ui/sonner/index.js'
  import { selectLibraryPage, countDownloading } from './lib/library.js'
- import {findPlayback,mediaURL} from './lib/media.js'
+ import {findPlayback,mediaURL,saveMedia} from './lib/media.js'
  import {createVersionReloadMonitor} from './lib/version-reload.js'
  import {applySubtitleSelection} from './lib/subtitles.js'
  import {copyToClipboard} from './lib/clipboard.js'
  import {browserLabel,clientDetail,describeSession} from './lib/user-agent.js'
- import { Film, House, Download, Search, Pause, Play, Trash2, HardDrive, HardDriveDownload, Database, Settings, LogOut, Plus, X, CheckCircle2, Shield, Clapperboard, AlertCircle, Star, ChevronLeft, ChevronRight, Maximize2, MonitorPlay, MonitorSmartphone, Users, RefreshCw, ArrowUpCircle, Files, Copy } from '@lucide/svelte'
+ import { Film, House, Download, Search, Pause, Play, Trash2, HardDrive, HardDriveDownload, Database, Settings, LogOut, Plus, X, CheckCircle2, Shield, Clapperboard, AlertCircle, Star, ChevronLeft, ChevronRight, Maximize2, MonitorPlay, MonitorSmartphone, Users, RefreshCw, ArrowUpCircle, Files, Copy, DownloadCloud } from '@lucide/svelte'
 
  type Movie = {hash:string,title:string,year:string,genre:string,poster:string,backdrop:string,rating:number,size:number,completed:number,progress:number,status:string,converted?:boolean,error?:string,files:{path:string,size:number,completed?:number}[]}
  type InspectedFile = {path:string,size:number,selected:boolean}
@@ -360,6 +360,15 @@
    if(!fileViewer)return
    inspectedFiles=null
    await loadFileList(fileViewer.hash,true)
+ }
+ // Save the file that is actually on disk: the original MKV/MP4 keeps its
+ // source quality and audio tracks, while the theater may be playing a
+ // converted MP4. Falls back to the prepared file if the source is gone.
+ const downloadOriginal=()=>{
+   if(!selected||!selectedPlayback.video)return
+   const file=selectedPlayback.video.path.split('/').pop()||selected.title
+   saveMedia(selected.hash,selectedPlayback.video.path,file)
+   notify('Saving '+file)
  }
  const enterFullscreen=async()=>{
    const video=playerVideo
@@ -1305,6 +1314,14 @@
          </div>
         {/if}
        {/if}
+       <Tooltip.Root>
+        <Tooltip.Trigger>
+         {#snippet child({ props })}
+          <Button {...props} variant="outline" size="sm" class="cinema-download-button" onclick={downloadOriginal} aria-label={'Download '+selectedPlayback.video.path.split('/').pop()}><DownloadCloud size={15}/> Download</Button>
+         {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content>Save the original file to this device</Tooltip.Content>
+       </Tooltip.Root>
        <Tooltip.Root>
         <Tooltip.Trigger>
          {#snippet child({ props })}

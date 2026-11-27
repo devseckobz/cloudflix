@@ -69,3 +69,28 @@ export function findPlayback(files){
 export function mediaURL(hash,path){
  return '/api/media/'+encodeURIComponent(hash)+'?path='+encodeURIComponent(path)
 }
+
+/**
+ * Original file download. Distinct from mediaURL: that one serves the browser
+ * player inline, while this one returns Content-Disposition: attachment so the
+ * untouched MKV/MP4 with its subtitles lands on disk instead of being decoded.
+ * @param {string} hash @param {string} path
+ */
+export function downloadURL(hash,path){
+ return '/api/files/'+encodeURIComponent(hash)+'?path='+encodeURIComponent(path)
+}
+
+/**
+ * Save the original media file, keeping its real filename instead of the
+ * sanitized one the server supplies for the Content-Disposition header.
+ * @param {string} hash @param {string} path @param {string} [name]
+ */
+export function saveMedia(hash,path,name){
+ const link=document.createElement('a')
+ link.href=downloadURL(hash,path)
+ link.rel='noopener'
+ if(name)link.download=name
+ document.body.appendChild(link)
+ link.click()
+ link.remove()
+}

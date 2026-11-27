@@ -233,12 +233,17 @@ func TestIssueSessionRecordsClientAndLastSeen(t *testing.T){
  if ip!="198.51.100.20" || agent!="CloudflixTest/2.0"{t.Fatalf("client metadata not recorded: %q %q",ip,agent)}
  if createdAt<=0 || lastSeen<=0{t.Fatalf("timestamps not recorded: %d %d",createdAt,lastSeen)}
  before:=lastSeen
- time.Sleep(1100*time.Millisecond)
+ // last_seen is refreshed by a later request, but at most once per
+ // sessionTouchInterval: a player issues a range request every few tens of
+ // milliseconds and must not turn each one into a write. Back-date the row
+ // instead of sleeping for a full interval.
+ backdated:=before-int64(sessionTouchInterval)-1
+ if _,err:=db.Exec("UPDATE sessions SET last_seen=? WHERE token_hash=?",backdated,hashToken(cookies[0].Value));err!=nil{t.Fatal(err)}
  authenticated:=httptest.NewRequest(http.MethodGet,"/api/state",nil)
  authenticated.AddCookie(cookies[0])
  if !a.authenticated(authenticated){t.Fatal("issued session is not authenticated")}
  if err:=db.QueryRow("SELECT last_seen FROM sessions WHERE token_hash=?",hashToken(cookies[0].Value)).Scan(&lastSeen);err!=nil{t.Fatal(err)}
- if lastSeen<=before{t.Fatalf("last_seen was not refreshed: %d -> %d",before,lastSeen)}
+ if lastSeen<=backdated{t.Fatalf("last_seen was not refreshed: %d -> %d",backdated,lastSeen)}
 }
 
 // The browser sends DELETE without a JSON body, so the CSRF guard must not

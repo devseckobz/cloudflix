@@ -124,6 +124,10 @@ func main() {
  mux.HandleFunc("POST /api/storage/cleanup",a.require(a.cleanupLeftovers))
  mux.Handle("/",static.Handler())
  addr:=env("CLOUDFLIX_LISTEN","0.0.0.0:80")
+ // No WriteTimeout: it is an absolute deadline for the whole response body, so
+ // a 4K movie streamed slower than size/timeout was cut off mid-playback and
+ // the player reconnected. Video handlers bound their own work; JSON routes are
+ // small. ReadHeaderTimeout still guards against slowloris.
  server:=&http.Server{Addr:addr,Handler:securityHeaders(mux),ReadHeaderTimeout:5*time.Second,IdleTimeout:60*time.Second,ReadTimeout:20*time.Second,MaxHeaderBytes:1<<20}
  log.Printf("Cloudflix %s listening on %s",version,addr)
  if err:=server.ListenAndServe();err!=nil && !errors.Is(err,http.ErrServerClosed){log.Fatal(err)}
@@ -183,16 +187,28 @@ func readJSON(w http.ResponseWriter,r *http.Request,dst any)bool{
 func randomToken()(string,error){data:=make([]byte,32);if _,err:=rand.Read(data);err!=nil{return "",err};return hex.EncodeToString(data),nil}
 func hashToken(token string)string{sum:=sha256.Sum256([]byte(token));return hex.EncodeToString(sum[:])}
 func (a *application) authStatus(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]bool{"setupRequired":!pinConfigured(a.db),"authenticated":a.authenticated(r)&&pinConfigured(a.db)})}
+// sessionTouchInterval bounds how often a session's last_seen is rewritten.
+// The previous form ran an UPDATE on every authenticated request, including
+// every 64 KiB video range, and SQLite has one connection here (SetMaxOpenConns(1)),
+// so a player buffering a movie queued a write behind each read. A minute of
+// granularity is enough for the session list and removes the write from the
+// hot path entirely.
+const sessionTouchInterval=60
+
 func (a *application) authenticated(r *http.Request)bool{
  cookie,err:=r.Cookie("cloudflix_session")
  if err!=nil || len(cookie.Value)!=64{return false}
  sum:=hashToken(cookie.Value)
+ now:=time.Now().Unix()
  var stored string
- if err=a.db.QueryRowContext(r.Context(),"SELECT token_hash FROM sessions WHERE token_hash=? AND expires_at>?",sum,time.Now().Unix()).Scan(&stored);err!=nil{return false}
+ var lastSeen int64
+ if err=a.db.QueryRowContext(r.Context(),"SELECT token_hash,last_seen FROM sessions WHERE token_hash=? AND expires_at>?",sum,now).Scan(&stored,&lastSeen);err!=nil{return false}
  if subtle.ConstantTimeCompare([]byte(stored),[]byte(sum))!=1{return false}
- // Cheap touch on every authenticated request; skipped within the same second
- // so a burst of range requests does not queue writes behind the single connection.
- _,_=a.db.ExecContext(r.Context(),"UPDATE sessions SET last_seen=? WHERE token_hash=? AND last_seen<?",time.Now().Unix(),sum,time.Now().Unix())
+ // Only the session that is actually due issues a write; within the interval
+ // the read above is the whole cost of authentication.
+ if now-lastSeen>=sessionTouchInterval{
+  _,_=a.db.ExecContext(r.Context(),"UPDATE sessions SET last_seen=? WHERE token_hash=?",now,sum)
+ }
  return true
 }
 func (a *application) require(h http.HandlerFunc)http.HandlerFunc{
